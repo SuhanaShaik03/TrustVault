@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Access for {{ viewer.display_name }} · TrustVault{% endblock %}
+{% block content %}
+  <h1>Document access for {{ viewer.display_name }}</h1>
+  <p class="muted">Choose Read, Edit, or Revoke for each document. Edits are submitted to you for approval.</p>
+  {{ action_form.errors }}
+  {% for item in document_access %}
+    <section class="card">
+      <h2>{{ item.document.title }}</h2>
+      <p>
+        Current access:
+        {% if item.grant %}{{ item.grant.get_permission_display }}{% else %}None{% endif %}
+      </p>
+      <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="document_id" value="{{ item.document.pk }}">
+        <button type="submit" name="action" value="read">Read</button>
+        <button type="submit" name="action" value="edit">Edit</button>
+        <button type="submit" name="action" value="revoke" class="danger">Revoke</button>
+      </form>
+    </section>
+  {% empty %}
+    <section class="card"><p class="muted">Upload a document before assigning access.</p></section>
+  {% endfor %}
+  <p><a href="{% url 'documents:document_list' %}?section=login-details">Back to login details</a></p>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Register · TrustVault{% endblock %}
+{% block content %}
+  <section class="card">
+    <h1>Create an account</h1>
+    <p class="muted">Choose your account type. Viewer and owner accounts require administrator approval. Administrator accounts require an invitation.</p>
+    <form method="post">
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+      {% for field in form %}
+        {% if field.is_hidden %}
+          {{ field }}
+        {% else %}
+          <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}{{ field.errors }}
+          {% if field.help_text %}<small class="muted">{{ field.help_text }}</small>{% endif %}
+        {% endif %}
+      {% endfor %}
+      <button type="submit">Create account</button>
+    </form>
+    <p><a href="{% url 'accounts:login' %}">Back to login</a></p>
+  </section>
+{% endblock %}

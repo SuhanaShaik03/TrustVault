@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{% if account_approved %}Administrator account created{% else %}Access request{% endif %} · TrustVault{% endblock %}
+{% block content %}
+  <section class="card">
+    {% if was_declined %}
+      <h1>Login access was declined</h1>
+      <p class="error">You do not have access to log in. Please try again or consult your administrator to get login approval.</p>
+      <p>A new approval request has been sent to the administrator.</p>
+    {% elif account_approved %}
+      <h1>Administrator account created</h1>
+      <p>Your administrator account is ready. You can now sign in.</p>
+    {% else %}
+      <h1>Administrator approval required</h1>
+      <p>Your login request has been sent to an administrator. You can log in after it is approved.</p>
+    {% endif %}
+    <p><a href="{% url 'accounts:login' %}">Return to login</a></p>
+  </section>
+{% endblock %}

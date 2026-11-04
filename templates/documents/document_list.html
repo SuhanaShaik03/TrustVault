@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Documents · TrustVault{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}
+{% block content %}
+  {% load tz %}
+  <p class="welcome-message">Welcome, {{ user.display_name }}</p>
+  <h1>Viewer documents</h1>
+  <nav class="tabs" aria-label="Viewer document sections">
+    <a href="?tab=assigned" {% if viewer_tab == "assigned" %}aria-current="page"{% endif %}>Assigned documents</a>
+    <a href="?tab=uploaded" {% if viewer_tab == "uploaded" %}aria-current="page"{% endif %}>Uploaded documents</a>
+  </nav>
+
+  {% if viewer_tab == "assigned" %}
+    <section class="card">
+      <h2>Assigned documents</h2>
+      <div style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr><th>Document name</th><th>Assigned owner user ID</th><th>Assigned date</th><th>Assigned time</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {% for grant in document_grants %}
+              <tr>
+                <td>{{ grant.document.title }}</td>
+                <td>{{ grant.document.owner.username }}</td>
+                {% timezone "Asia/Kolkata" %}
+                  <td>{{ grant.created_at|date:"d M Y" }}</td>
+                  <td>{{ grant.created_at|date:"h:i A" }}</td>
+                {% endtimezone %}
+                <td>
+                  <a class="button" href="{% url 'documents:document_open' grant.document.pk %}" target="_blank" rel="noopener">Open document</a>
+                  {% if grant.permission == "edit" %}
+                    <a class="button secondary" href="{% url 'documents:document_change_submit' grant.document.pk %}">Upload document</a>
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="5" class="muted">No documents have been assigned to you.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% else %}
+    <section class="card">
+      <h2>Uploaded documents</h2>
+      <div style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr><th>Uploaded document name</th><th>Approval status</th><th>Date uploaded</th><th>Time uploaded</th></tr>
+          </thead>
+          <tbody>
+            {% for change_request in change_requests %}
+              <tr>
+                <td>{{ change_request.uploaded_filename|default:change_request.document.title }}</td>
+                <td>
+                  {% if change_request.status == "pending" %}
+                    Pending approval
+                  {% elif change_request.status == "approved" %}
+                    Approved
+                  {% else %}
+                    Declined — Your request has been declined by the owner.
+                  {% endif %}
+                </td>
+                {% timezone "Asia/Kolkata" %}
+                  <td>{{ change_request.created_at|date:"d M Y" }}</td>
+                  <td>{{ change_request.created_at|date:"h:i A" }}</td>
+                {% endtimezone %}
+              </tr>
+            {% empty %}
+              <tr><td colspan="4" class="muted">You have not uploaded any modified documents.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+{% endblock %}
