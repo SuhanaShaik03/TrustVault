@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Review document change · TrustVault{% endblock %}
+{% block content %}
+  <section class="card">
+    <h1>Review modified document</h1>
+    <p>
+      {{ change_request.viewer.display_name }} submitted a replacement for
+      <strong>{{ change_request.document.title }}</strong>
+      on {{ change_request.created_at|date:"Y-m-d H:i" }} UTC.
+    </p>
+    <p>The existing document will remain unchanged unless you approve this request.</p>
+    <p>
+      <a class="button" href="{% url 'documents:document_change_preview' change_request.pk %}" target="_blank" rel="noopener">Open submitted document</a>
+    </p>
+    <form method="post">
+      {% csrf_token %}
+      <button type="submit" name="decision" value="approve">Approve and replace document</button>
+      <button type="submit" name="decision" value="decline" class="danger">Decline</button>
+    </form>
+  </section>
+  <p><a href="{% url 'documents:document_list' %}?section=approval-requests">Back to approval requests</a></p>
+{% endblock %}

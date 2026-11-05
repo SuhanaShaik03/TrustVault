@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}TrustVault{% endblock %}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: system-ui, Segoe UI, sans-serif;
+      color: #28233a;
+      background: #f5f2fa;
+      --ink: #28233a;
+      --muted: #625d73;
+      --plum: #28163c;
+      --brand: #50327f;
+      --accent: #6244bd;
+      --line: #ded7e9;
+      --surface: #fff;
+      --surface-soft: #f5f1fa;
+      --danger: #a52e45;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--ink);
+      background-color: #21132f;
+      background-image:
+        radial-gradient(ellipse at 18% 18%, #8e315f 0, transparent 38%),
+        radial-gradient(ellipse at 85% 78%, #3c50ad 0, transparent 42%),
+        radial-gradient(ellipse at 55% 42%, #542542 0, transparent 52%),
+        linear-gradient(135deg, #1d1230 0%, #35203f 48%, #202344 100%);
+      background-attachment: fixed;
+    }
+    body.dashboard-page {
+      background-color: #f5f2fa;
+      background-image: linear-gradient(130deg, #f8f3fa 0%, #f4f2fb 52%, #edf0fc 100%);
+    }
+    header {
+      background: linear-gradient(110deg, #28163c 0%, #503174 56%, #41418d 100%);
+      color: #fff;
+      padding: 1rem max(1rem, calc((100% - 1040px) / 2));
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      box-shadow: 0 4px 18px #24133824;
+    }
+    header a { color: #fff; text-decoration: none; }
+    header a:hover { color: #eee5ff; }
+    header strong { letter-spacing: .025em; }
+    main { max-width: 1040px; margin: 2rem auto; padding: 0 1rem 2rem; }
+    h1, h2 { color: var(--brand); }
+    main > h1, main > .welcome-message { color: #fff; text-shadow: 0 2px 12px #10091b80; }
+    .dashboard-page main > h1, .dashboard-page main > .welcome-message {
+      color: var(--brand);
+      text-shadow: none;
+    }
+    a { color: var(--accent); }
+    a:hover { color: #3e267d; }
+    .welcome-message { color: var(--brand); font-size: 1.5rem; font-weight: 700; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 1.25rem;
+      margin: 1rem 0;
+      box-shadow: 0 8px 26px #30204d12;
+    }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }
+    label { display: block; font-weight: 600; margin: .8rem 0 .25rem; color: #39334c; }
+    input, select, textarea {
+      box-sizing: border-box;
+      max-width: 100%;
+      width: 100%;
+      padding: .65rem;
+      border: 1px solid #cbc3d9;
+      border-radius: 7px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+      outline: 3px solid #6244bd2b;
+    }
+    button, .button {
+      display: inline-block;
+      border: 0;
+      border-radius: 7px;
+      padding: .65rem .9rem;
+      margin: .3rem .2rem .3rem 0;
+      background: linear-gradient(110deg, #a13d76, #5942bd);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      box-shadow: 0 3px 9px #51327e24;
+      transition: filter .15s ease, transform .15s ease;
+    }
+    button:hover, .button:hover { color: #fff; filter: brightness(1.08); transform: translateY(-1px); }
+    button.danger, .danger { background: var(--danger); }
+    button.secondary, .secondary { background: #5a536d; }
+    button:focus-visible, .button:focus-visible, a:focus-visible {
+      outline: 3px solid #9a7ce2;
+      outline-offset: 2px;
+    }
+    table { border-collapse: separate; border-spacing: 0; width: 100%; background: #fff; }
+    th, td { padding: .75rem; border-bottom: 1px solid #e6e1ed; text-align: left; vertical-align: top; }
+    th { background: #eee8f5; color: #38264e; font-weight: 700; }
+    th:first-child { border-top-left-radius: 6px; }
+    th:last-child { border-top-right-radius: 6px; }
+    tbody tr:nth-child(even) { background: #faf8fc; }
+    tbody tr:hover { background: #f1ebf8; }
+    td { color: #302b3e; }
+    .muted { color: var(--muted); }
+    .notice { padding: .85rem 1rem; border: 1px solid #c9e2d4; border-radius: 8px; background: #eaf5ee; color: #24553c; margin: .7rem 0; }
+    .errorlist, .error { color: #9c263e; }
+    .tabs { display: flex; flex-wrap: wrap; gap: .5rem; border-bottom: 1px solid var(--line); padding-bottom: .7rem; }
+    .tabs a { padding: .55rem .8rem; color: var(--brand); text-decoration: none; border-radius: 6px; }
+    .tabs a[aria-current="page"] { background: #e9e1f3; color: #382354; font-weight: 700; }
+    form.inline { display: inline; }
+    .status { color: var(--brand); font-weight: 700; }
+    .owner-documents { padding: 0; overflow: hidden; }
+    .owner-documents__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; padding: 1.4rem 1.5rem; border-bottom: 1px solid var(--line); background: #fcfaff; }
+    .owner-documents__header h2 { margin: 0; }
+    .owner-documents__header p { margin: .4rem 0 0; }
+    .owner-documents__table-wrap { overflow-x: auto; }
+    .owner-documents__table { min-width: 650px; }
+    .owner-documents__table th { background: #eee8f5; color: #49365f; font-size: .78rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    .owner-documents__table td { padding: .9rem 1rem; vertical-align: middle; }
+    .owner-documents__table tbody tr:hover { background: #f1ebf8; }
+    .owner-documents__title { color: var(--ink); font-weight: 650; }
+    .owner-documents__time { color: var(--muted); white-space: nowrap; }
+    .owner-documents__actions { white-space: nowrap; }
+    .owner-documents__actions .button { margin: .15rem; }
+    .owner-documents__empty { padding: 2rem !important; color: var(--muted); text-align: center; }
+    @media (max-width: 650px) { table { display: block; overflow-x: auto; } header { align-items: flex-start; } }
+    @media (max-width: 650px) { .owner-documents__header { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <header>
+    <a href="{% url 'accounts:dashboard' %}"><strong>TrustVault</strong></a>
+    {% if user.is_authenticated %}
+      <span>{{ user.display_name }} · {{ user.get_role_display }}
+        <form class="inline" method="post" action="{% url 'accounts:logout' %}">
+          {% csrf_token %}<button class="secondary" type="submit">Log out</button>
+        </form>
+      </span>
+    {% endif %}
+  </header>
+  <main>
+    {% for message in messages %}<div class="notice">{{ message }}</div>{% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
