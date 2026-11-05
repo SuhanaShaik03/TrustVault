@@ -1,0 +1,421 @@
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.files.storage import InMemoryStorage
+from datetime import datetime, timezone
+from django.test import RequestFactory, TestCase
+from django.urls import reverse
+
+from accounts.models import User
+from documents.models import AuditEvent, Document, DocumentChangeRequest, DocumentGrant
+from documents.services import record_event, verify_audit_chain
+from documents.validators import validate_document_file
+
+
+class DocumentPermissionTests(TestCase):
+    def setUp(self):
+        self.file_field = Document._meta.get_field("file")
+        self.original_storage = self.file_field.storage
+        self.change_file_field = DocumentChangeRequest._meta.get_field("submitted_file")
+        self.original_change_storage = self.change_file_field.storage
+        self.storage = InMemoryStorage()
+        self.file_field.storage = self.storage
+        self.change_file_field.storage = self.storage
+        self.owner = User.objects.create_user(
+            username="owner",
+            password="SecurePass123!test",
+            role=User.Role.OWNER,
+            is_approved=True,
+        )
+        self.viewer = User.objects.create_user(
+            username="viewer",
+            password="SecurePass123!test",
+            role=User.Role.VIEWER,
+            is_approved=True,
+        )
+        self.document = Document.objects.create(
+            owner=self.owner,
+            title="Quarterly report",
+            description="Internal",
+            file=SimpleUploadedFile("report.pdf", b"%PDF-1.4 confidential text", content_type="application/pdf"),
+        )
+
+    def tearDown(self):
+        for document in Document.objects.all():
+            document.file.delete(save=False)
+        for change_request in DocumentChangeRequest.objects.all():
+            change_request.submitted_file.delete(save=False)
+        self.file_field.storage = self.original_storage
+        self.change_file_field.storage = self.original_change_storage
+
+    def test_unshared_user_cannot_open_document(self):
+        self.client.force_login(self.viewer)
+        response = self.client.get(
+            reverse("documents:document_detail", args=[self.document.pk])
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_read_grant_allows_download_but_not_edit(self):
+        DocumentGrant.objects.create(
+            document=self.document,
+            user=self.viewer,
+            permission=DocumentGrant.Permission.READ,
+        )
+        self.client.force_login(self.viewer)
+
+        download = self.client.get(
+            reverse("documents:document_download", args=[self.document.pk])
+        )
+        opened = self.client.get(
+            reverse("documents:document_open", args=[self.document.pk])
+        )
+        edit = self.client.get(reverse("documents:document_edit", args=[self.document.pk]))
+        submit_change = self.client.get(
+            reverse("documents:document_change_submit", args=[self.document.pk])
+        )
+
+        self.assertEqual(download.status_code, 200)
+        download.close()
+        self.assertEqual(opened.status_code, 200)
+        self.assertTrue(opened["Content-Disposition"].startswith("inline"))
+        opened.close()
+        self.assertEqual(edit.status_code, 404)
+        self.assertEqual(submit_change.status_code, 404)
+
+    def test_edit_grant_cannot_change_original_document_directly(self):
+        DocumentGrant.objects.create(
+            document=self.document,
+            user=self.viewer,
+            permission=DocumentGrant.Permission.EDIT,
+        )
+        self.client.force_login(self.viewer)
+        response = self.client.post(
+            reverse("documents:document_edit", args=[self.document.pk]),
+            {"title": "Updated report", "description": "Revised"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.document.refresh_from_db()
+        self.assertEqual(self.document.title, "Quarterly report")
+        self.assertFalse(AuditEvent.objects.filter(action="document_modified").exists())
+
+    def test_owner_can_replace_document_file_and_old_copy_is_removed(self):
+        old_name = self.document.file.name
+        storage = self.document.file.storage
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            reverse("documents:document_edit", args=[self.document.pk]),
+            {
+                "title": self.document.title,
+                "description": self.document.description,
+                "file": SimpleUploadedFile(
+                    "replacement.docx",
+                    b"PK\x03\x04updated document",
+                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.document.refresh_from_db()
+        self.assertNotEqual(self.document.file.name, old_name)
+        self.assertFalse(storage.exists(old_name))
+        event = AuditEvent.objects.get(action="document_modified")
+        self.assertTrue(event.details["file_replaced"])
+
+    def test_owner_can_share_and_revoke_access(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            reverse("documents:document_share", args=[self.document.pk]),
+            {"user": self.viewer.pk, "permission": DocumentGrant.Permission.READ},
+        )
+        self.assertRedirects(
+            response,
+            reverse("documents:document_detail", args=[self.document.pk]),
+        )
+        grant = DocumentGrant.objects.get(document=self.document, user=self.viewer)
+        response = self.client.post(
+            reverse(
+                "documents:document_revoke",
+                args=[self.document.pk, grant.pk],
+            )
+        )
+        self.assertRedirects(
+            response,
+            reverse("documents:document_detail", args=[self.document.pk]),
+        )
+        self.assertFalse(DocumentGrant.objects.filter(pk=grant.pk).exists())
+        self.assertTrue(AuditEvent.objects.filter(action="document_access_revoked").exists())
+
+    def test_upload_validator_rejects_mismatched_pdf_signature(self):
+        upload = SimpleUploadedFile("fake.pdf", b"not a pdf")
+        with self.assertRaisesMessage(Exception, "valid PDF signature"):
+            validate_document_file(upload)
+
+    def test_upload_validator_accepts_only_supported_document_types(self):
+        validate_document_file(SimpleUploadedFile("report.pdf", b"%PDF-1.7 content"))
+        validate_document_file(SimpleUploadedFile("report.docx", b"PK\x03\x04content"))
+        validate_document_file(
+            SimpleUploadedFile("report.doc", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1content")
+        )
+        with self.assertRaisesMessage(Exception, "Upload a PDF, DOC, or DOCX"):
+            validate_document_file(SimpleUploadedFile("report.txt", b"plain text"))
+
+    def test_owner_dashboard_has_required_tabs_and_login_details(self):
+        other_owner = User.objects.create_user(
+            username="other-owner",
+            password="SecurePass123!test",
+            role=User.Role.OWNER,
+            is_approved=True,
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(reverse("documents:document_list"))
+        self.assertContains(response, "Documents")
+        self.assertContains(response, "Login details")
+        self.assertContains(response, "Approval requests")
+
+        response = self.client.get(
+            reverse("documents:document_list"),
+            {"section": "login-details"},
+        )
+        self.assertContains(response, self.viewer.username)
+        self.assertContains(response, "Viewers list")
+        self.assertContains(response, "Owner list")
+        self.assertNotContains(response, other_owner.username)
+        self.assertContains(response, "Manage access")
+
+        response = self.client.get(
+            reverse("documents:document_list"),
+            {"section": "login-details", "list": "owners"},
+        )
+        self.assertContains(response, other_owner.username)
+        self.assertNotContains(response, f"<td>{self.viewer.username}</td>")
+
+    def test_owner_document_table_shows_upload_timestamp_in_ist_and_actions(self):
+        Document.objects.filter(pk=self.document.pk).update(
+            created_at=datetime(2025, 12, 31, 18, 30, tzinfo=timezone.utc)
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(reverse("documents:document_list"))
+
+        self.assertContains(response, "Document name")
+        self.assertContains(response, "Date uploaded (IST)")
+        self.assertContains(response, "Time uploaded (IST)")
+        self.assertContains(response, "01 Jan 2026")
+        self.assertContains(response, "12:00 AM")
+        self.assertContains(response, "Open")
+        self.assertContains(response, "Edit details")
+        self.assertContains(response, "Delete")
+
+    def test_viewer_has_assigned_and_uploaded_document_tabs(self):
+        read_document = Document.objects.create(
+            owner=self.owner,
+            title="Read-only file",
+            file=SimpleUploadedFile("read.pdf", b"%PDF-1.4 read"),
+        )
+        read_grant = DocumentGrant.objects.create(
+            document=read_document,
+            user=self.viewer,
+            permission=DocumentGrant.Permission.READ,
+        )
+        edit_grant = DocumentGrant.objects.create(
+            document=self.document,
+            user=self.viewer,
+            permission=DocumentGrant.Permission.EDIT,
+        )
+        DocumentChangeRequest.objects.create(
+            document=self.document,
+            viewer=self.viewer,
+            submitted_file=SimpleUploadedFile("revision.docx", b"PK\x03\x04revision"),
+            uploaded_filename="revision.docx",
+            status=DocumentChangeRequest.Status.PENDING,
+        )
+        DocumentChangeRequest.objects.create(
+            document=read_document,
+            viewer=self.viewer,
+            submitted_file=SimpleUploadedFile("accepted.pdf", b"%PDF-1.4 accepted"),
+            uploaded_filename="accepted.pdf",
+            status=DocumentChangeRequest.Status.APPROVED,
+        )
+        self.client.force_login(self.viewer)
+
+        response = self.client.get(reverse("documents:document_list"))
+        self.assertContains(response, "Assigned documents")
+        self.assertContains(response, "Uploaded documents")
+        self.assertContains(response, self.owner.username)
+        self.assertContains(
+            response,
+            reverse("documents:document_change_submit", args=[edit_grant.document_id]),
+            count=1,
+        )
+        self.assertNotContains(
+            response,
+            reverse("documents:document_change_submit", args=[read_grant.document_id]),
+        )
+        self.assertContains(
+            response,
+            reverse("documents:document_open", args=[edit_grant.document_id]),
+        )
+
+        response = self.client.get(reverse("documents:document_list"), {"tab": "uploaded"})
+        self.assertContains(response, "revision.docx")
+        self.assertContains(response, "Pending approval")
+        self.assertContains(response, "accepted.pdf")
+        self.assertContains(response, "Approved")
+        self.assertContains(response, "Date uploaded")
+        self.assertContains(response, "Time uploaded")
+        self.assertNotContains(response, "Open document")
+
+    def test_owner_can_assign_read_edit_and_revoke_for_selected_viewer(self):
+        self.client.force_login(self.owner)
+        access_url = reverse("documents:owner_viewer_access", args=[self.viewer.pk])
+
+        for action in ("read", "edit"):
+            response = self.client.post(
+                access_url,
+                {"document_id": self.document.pk, "action": action},
+            )
+            self.assertRedirects(response, access_url)
+            self.assertEqual(
+                DocumentGrant.objects.get(document=self.document, user=self.viewer).permission,
+                action,
+            )
+
+        self.client.post(
+            access_url,
+            {"document_id": self.document.pk, "action": "revoke"},
+        )
+        self.assertFalse(DocumentGrant.objects.filter(document=self.document, user=self.viewer).exists())
+
+    def test_viewer_change_is_pending_until_owner_approves(self):
+        DocumentGrant.objects.create(
+            document=self.document,
+            user=self.viewer,
+            permission=DocumentGrant.Permission.EDIT,
+        )
+        self.client.force_login(self.viewer)
+        response = self.client.post(
+            reverse("documents:document_change_submit", args=[self.document.pk]),
+            {"submitted_file": SimpleUploadedFile("changed.pdf", b"%PDF-1.7 changed content")},
+        )
+
+        self.assertRedirects(
+            response,
+            reverse("documents:document_detail", args=[self.document.pk]),
+        )
+        change_request = DocumentChangeRequest.objects.get(document=self.document)
+        self.assertEqual(change_request.status, DocumentChangeRequest.Status.PENDING)
+        self.assertEqual(self.document.file.read(), b"%PDF-1.4 confidential text")
+
+        self.client.force_login(self.owner)
+        detail_url = reverse("documents:document_change_detail", args=[change_request.pk])
+        preview = self.client.get(
+            reverse("documents:document_change_preview", args=[change_request.pk])
+        )
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(b"".join(preview.streaming_content), b"%PDF-1.7 changed content")
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(detail_url, {"decision": "approve"})
+
+        self.assertRedirects(response, f"{reverse('documents:document_list')}?section=approval-requests")
+        self.document.refresh_from_db()
+        change_request.refresh_from_db()
+        self.assertEqual(change_request.status, DocumentChangeRequest.Status.APPROVED)
+        self.assertEqual(self.document.file.read(), b"%PDF-1.7 changed content")
+
+    def test_declined_viewer_change_leaves_document_unchanged_and_notifies_viewer(self):
+        DocumentGrant.objects.create(
+            document=self.document,
+            user=self.viewer,
+            permission=DocumentGrant.Permission.EDIT,
+        )
+        self.client.force_login(self.viewer)
+        self.client.post(
+            reverse("documents:document_change_submit", args=[self.document.pk]),
+            {"submitted_file": SimpleUploadedFile("changed.pdf", b"%PDF-1.7 declined content")},
+        )
+        change_request = DocumentChangeRequest.objects.get(document=self.document)
+
+        self.client.force_login(self.owner)
+        with self.captureOnCommitCallbacks(execute=True):
+            self.client.post(
+                reverse("documents:document_change_detail", args=[change_request.pk]),
+                {"decision": "decline"},
+            )
+
+        self.document.refresh_from_db()
+        self.assertEqual(self.document.file.read(), b"%PDF-1.4 confidential text")
+        self.client.force_login(self.viewer)
+        response = self.client.get(
+            reverse("documents:document_list"),
+            {"tab": "uploaded"},
+        )
+        self.assertContains(response, "Your request has been declined by the owner.")
+
+
+class AuditChainTests(TestCase):
+    def setUp(self):
+        self.file_field = Document._meta.get_field("file")
+        self.original_storage = self.file_field.storage
+        self.change_file_field = DocumentChangeRequest._meta.get_field("submitted_file")
+        self.original_change_storage = self.change_file_field.storage
+        self.storage = InMemoryStorage()
+        self.file_field.storage = self.storage
+        self.change_file_field.storage = self.storage
+        self.actor = User.objects.create_user(
+            username="auditor",
+            password="SecurePass123!test",
+            role=User.Role.OWNER,
+            is_approved=True,
+        )
+
+    def tearDown(self):
+        for document in Document.objects.all():
+            document.file.delete(save=False)
+        for change_request in DocumentChangeRequest.objects.all():
+            change_request.submitted_file.delete(save=False)
+        self.file_field.storage = self.original_storage
+        self.change_file_field.storage = self.original_change_storage
+
+    def test_events_form_verifiable_chain_and_tampering_is_detected(self):
+        record_event(actor=self.actor, action="document_shared", target_label="report")
+        record_event(actor=self.actor, action="document_received", target_label="report")
+        self.assertTrue(verify_audit_chain())
+
+        event = AuditEvent.objects.first()
+        AuditEvent.objects.filter(pk=event.pk).update(target_label="changed")
+        self.assertFalse(verify_audit_chain())
+
+    def test_request_ip_is_recorded_and_protected_by_the_audit_hash(self):
+        request = RequestFactory().get("/", REMOTE_ADDR="203.0.113.8")
+        event = record_event(
+            actor=self.actor,
+            action="document_received",
+            target_label="report",
+            request=request,
+        )
+
+        self.assertEqual(event.ip_address, "203.0.113.8")
+        self.assertTrue(verify_audit_chain())
+        AuditEvent.objects.filter(pk=event.pk).update(ip_address="203.0.113.9")
+        self.assertFalse(verify_audit_chain())
+
+    def test_deleting_referenced_user_does_not_break_audit_chain(self):
+        record_event(actor=self.actor, action="account_deleted", target_label=self.actor.username)
+        self.actor.delete()
+        self.assertTrue(verify_audit_chain())
+
+    def test_deleting_referenced_document_does_not_break_audit_chain(self):
+        document = Document.objects.create(
+            owner=self.actor,
+            title="Audit target",
+            file=SimpleUploadedFile("target.pdf", b"%PDF-1.4 sample", content_type="application/pdf"),
+        )
+        record_event(
+            actor=self.actor,
+            action="document_received",
+            target_label=document.title,
+            document=document,
+        )
+        document.delete()
+        self.assertTrue(verify_audit_chain())
