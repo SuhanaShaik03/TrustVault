@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Create account · TrustVault{% endblock %}
+{% block content %}
+  <section class="card">
+    <h1>Create a user or owner</h1>
+    <p>Accounts created by an administrator are approved for login immediately.</p>
+    <form method="post">
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+      {% for field in form %}
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}{{ field.errors }}
+        {% if field.help_text %}<small class="muted">{{ field.help_text }}</small>{% endif %}
+      {% endfor %}
+      <button type="submit">Create account</button>
+      <a class="button secondary" href="{% url 'accounts:user_list' %}">Cancel</a>
+    </form>
+  </section>
+{% endblock %}

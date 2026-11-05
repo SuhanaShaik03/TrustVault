@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Log in · TrustVault{% endblock %}
+{% block content %}
+  <section class="card login-card">
+    <h1>Log in</h1>
+    <p class="muted">Use your user ID and password. New accounts need administrator approval before access.</p>
+    <form method="post">
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+      {% for field in form %}
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}{{ field.errors }}
+      {% endfor %}
+      <button type="submit">Log in</button>
+    </form>
+    <p>New to TrustVault? <a href="{% url 'accounts:register' %}">Create an account</a>.</p>
+  </section>
+  <style>
+    main {
+      min-height: calc(100vh - 5rem);
+      display: grid;
+      place-items: center;
+    }
+    .login-card {
+      width: min(100%, 460px);
+      margin: 0 auto;
+      padding: clamp(1.5rem, 5vw, 2.5rem);
+      border: 1px solid #ffffff50;
+      border-radius: 28px;
+      background: linear-gradient(145deg, #a13d6878 0%, #633f8cce 52%, #5055afcf 100%);
+      box-shadow: 0 24px 70px #10091b66, inset 0 1px #ffffff40;
+      color: #fff;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    .login-card h1 { color: #fff; text-align: center; text-shadow: 0 2px 14px #120a2480; }
+    .login-card p, .login-card .muted { color: #f5efff; }
+    .login-card > p:first-of-type { text-align: center; }
+    .login-card label { color: #fff; }
+    .login-card input {
+      border: 0;
+      border-bottom: 1px solid #ffffffb8;
+      border-radius: 0;
+      background: #ffffff0d;
+      color: #fff;
+    }
+    .login-card input::placeholder { color: #eee7f5; }
+    .login-card input:focus {
+      border-bottom-color: #fff;
+      outline: 2px solid #ffffff70;
+      outline-offset: 2px;
+    }
+    .login-card button {
+      width: 100%;
+      margin: 1.1rem 0 .4rem;
+      padding: .8rem 1rem;
+      border-radius: 10px;
+      background: linear-gradient(100deg, #a92c65 0%, #682c99 52%, #4358d5 100%);
+      box-shadow: 0 8px 22px #24133d60;
+      letter-spacing: .04em;
+    }
+    .login-card a { color: #fff; font-weight: 650; }
+    .login-card a:hover { color: #f0dcff; }
+    .login-card .errorlist, .login-card .error { color: #ffe0e8; }
+    @media (max-width: 500px) {
+      .login-card { border-radius: 22px; }
+    }
+  </style>
+{% endblock %}

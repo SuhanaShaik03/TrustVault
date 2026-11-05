@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ document.title }} · TrustVault{% endblock %}
+{% block content %}
+  <section class="card">
+    <h1>{{ document.title }}</h1>
+    <p class="muted">Owner: {{ document.owner.display_name }} · Updated {{ document.updated_at|date:"Y-m-d H:i" }} UTC</p>
+    <p>{{ document.description|default:"No description."|linebreaksbr }}</p>
+    <a class="button" href="{% url 'documents:document_open' document.pk %}" target="_blank" rel="noopener">Open document</a>
+    <a class="button secondary" href="{% url 'documents:document_download' document.pk %}">Download</a>
+    {% if is_owner %}
+      <a class="button" href="{% url 'documents:document_edit' document.pk %}">Edit details</a>
+      <a class="button" href="{% url 'documents:document_share' document.pk %}">Share</a>
+      <form class="inline" method="post" action="{% url 'documents:document_delete' document.pk %}" onsubmit="return confirm('Delete this document?');">
+        {% csrf_token %}<button class="danger" type="submit">Delete document</button>
+      </form>
+    {% elif can_submit_change %}
+      <a class="button" href="{% url 'documents:document_change_submit' document.pk %}">Upload modified document for approval</a>
+    {% endif %}
+    {% if viewer_change_request %}
+      <p class="notice">
+        {% if viewer_change_request.status == "declined" %}
+          Your request has been declined by the owner.
+        {% elif viewer_change_request.status == "approved" %}
+          The owner approved your modified document.
+        {% else %}
+          Your modified document is waiting for owner approval.
+        {% endif %}
+      </p>
+    {% endif %}
+  </section>
+  {% if is_owner %}
+    <section class="card">
+      <h2>People with access</h2>
+      {% for grant in grants %}
+        <p>
+          {{ grant.user.display_name }} ({{ grant.user.username }}) · {{ grant.get_permission_display }}
+          <form class="inline" method="post" action="{% url 'documents:document_revoke' document.pk grant.pk %}">
+            {% csrf_token %}<button class="danger" type="submit">Revoke</button>
+          </form>
+        </p>
+      {% empty %}<p class="muted">No one has access yet.</p>{% endfor %}
+    </section>
+  {% endif %}
+  <p><a href="{% url 'documents:document_list' %}">Back to documents</a></p>
+{% endblock %}
