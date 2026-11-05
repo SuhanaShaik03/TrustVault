@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Invite administrator · TrustVault{% endblock %}
+{% block content %}
+  <section class="card">
+    <h1>Invite an administrator</h1>
+    <p class="muted">Create a one-time registration link. Anyone with the link can use it once to create an administrator account. Share it only with the intended recipient.</p>
+    <form method="post">
+      {% csrf_token %}
+      <button type="submit">Create invitation link</button>
+    </form>
+    {% if invitation_url %}
+      <p>Copy and send this link to the new administrator. It will not be shown again.</p>
+      <p><a href="{{ invitation_url }}">{{ invitation_url }}</a></p>
+    {% endif %}
+    <p><a href="{% url 'accounts:admin_dashboard' %}">Back to dashboard</a></p>
+  </section>
+{% endblock %}
