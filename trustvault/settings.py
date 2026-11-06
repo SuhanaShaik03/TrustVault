@@ -12,7 +12,7 @@ DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() in {"1", "true", "yes"}
 ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
-    "trust-vault-project.vercel.app",
+    "trust-vault-project-snovasyss.vercel.app",
 ]
 
 INSTALLED_APPS = [
