@@ -15,7 +15,7 @@
 
 ## Operational limits
 
-- SQLite and local filesystem storage are for development. Production should use PostgreSQL and private encrypted object storage.
+- PostgreSQL and local filesystem storage are used in development. Production should use PostgreSQL and private encrypted object storage.
 - The audit chain is tamper-evident, not tamper-proof. Send signed checkpoints to a separate trust boundary before treating it as compliance evidence.
 - Revocation blocks subsequent server requests, not downloaded or copied content.
 - HTTPS, backups, retention rules, malware scanning, alerting, and production deployment have not been provisioned in this workspace.

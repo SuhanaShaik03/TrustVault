@@ -16,6 +16,7 @@ Audit IP addresses are taken from the direct connection's `REMOTE_ADDR` value. W
 ## Run locally (Windows PowerShell)
 
 ```powershell
+$env:DATABASE_URL = "postgresql://trustvault:YOUR_PASSWORD@localhost:5432/trustvault"
 py -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 .venv\Scripts\python.exe manage.py migrate
@@ -34,6 +35,6 @@ Run checks and tests with:
 
 ## Configuration and security
 
-Local development uses SQLite and a development-only secret key. For deployment, set `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=False`, and `DJANGO_ALLOWED_HOSTS`, and run behind an HTTPS reverse proxy. Production mode refuses the development secret and enables secure cookies, HTTPS redirect, HSTS, and content-type protections. Do not use Django's development server in production.
+Local development and deployment use PostgreSQL, configured through the `DATABASE_URL` environment variable. Create a PostgreSQL database and user before running the setup commands. Local development uses a development-only secret key. For deployment, set `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=False`, and `DJANGO_ALLOWED_HOSTS`, and run behind an HTTPS reverse proxy. Production mode refuses the development secret and enables secure cookies, HTTPS redirect, HSTS, and content-type protections. Do not use Django's development server in production.
 
 Passwords use Django hashing and validation. Uploads are limited to 10 MiB and checked for supported extensions and basic file signatures. Document types are limited to PDF, DOC, and DOCX. Authorization is enforced on the server for every document action; denied access is recorded. Grant revocation blocks subsequent requests but cannot recall a copy already downloaded. The audit chain is tamper-evident, not tamper-proof against an operator able to rewrite the database. Local files are not encrypted at rest; production should use private encrypted storage, malware scanning, external signed audit checkpoints, backups, and retention controls.
