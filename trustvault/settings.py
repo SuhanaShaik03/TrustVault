@@ -10,9 +10,12 @@ SECRET_KEY = os.environ.get(
 )
 DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() in {"1", "true", "yes"}
 ALLOWED_HOSTS = [
-   "localhost",
-    "127.0.0.1",
-    "trustvaultproject.vercel.app",
+    host.strip()
+    for host in os.environ.get(
+        "DJANGO_ALLOWED_HOSTS",
+        "trustvaultproject-330c942qs-na-2210.vercel.app,trust-vault-silk.vercel.app,localhost,127.0.0.1",
+    ).split(",")
+    if host.strip()
 ]
 
 INSTALLED_APPS = [
