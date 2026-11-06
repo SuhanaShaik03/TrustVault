@@ -9,14 +9,28 @@ SECRET_KEY = os.environ.get(
     "development-only-change-this-secret-key-before-deployment",
 )
 DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() in {"1", "true", "yes"}
-ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.environ.get(
-        "DJANGO_ALLOWED_HOSTS",
-        "trust-vault-silk.vercel.app,localhost,127.0.0.1",
-    ).split(",")
-    if host.strip()
+default_allowed_hosts = [
+    "localhost",
+    "127.0.0.1",
+    "trust-vault-snowy.vercel.app",
+    "trust-vault-pocx51pye-na-2210.vercel.app",
 ]
+
+for env_name in ("VERCEL_URL", "APP_URL", "PUBLIC_URL", "SITE_URL"):
+    value = os.environ.get(env_name, "").strip()
+    if value:
+        default_allowed_hosts.append(value)
+
+ALLOWED_HOSTS = list(
+    dict.fromkeys(
+        host.strip()
+        for host in os.environ.get(
+            "DJANGO_ALLOWED_HOSTS",
+            ",".join(default_allowed_hosts),
+        ).split(",")
+        if host.strip()
+    )
+)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
