@@ -13,7 +13,7 @@ ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get(
         "DJANGO_ALLOWED_HOSTS",
-        "trust-vault-silk.vercel.app,localhost,127.0.0.1",
+        "trust-vault.vercel.app,localhost,127.0.0.1",
     ).split(",")
     if host.strip()
 ]
