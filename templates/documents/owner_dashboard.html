@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Owner dashboard · TrustVault{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}
+{% block content %}
+  <p class="welcome-message">Welcome, {{ user.display_name }}</p>
+  <h1>Owner dashboard</h1>
+  <nav class="tabs" aria-label="Owner sections">
+    <a href="?section=documents" {% if section == "documents" %}aria-current="page"{% endif %}>Documents</a>
+    <a href="?section=login-details" {% if section == "login-details" %}aria-current="page"{% endif %}>Login details</a>
+    <a href="?section=approval-requests" {% if section == "approval-requests" %}aria-current="page"{% endif %}>Approval requests ({{ pending_change_count }})</a>
+  </nav>
+
+  {% if section == "documents" %}
+    <section class="card owner-documents">
+      <div class="owner-documents__header">
+        <div>
+          <h2>Your documents</h2>
+          <p class="muted">Manage your files. Supported formats: PDF, DOC, and DOCX.</p>
+        </div>
+        <a class="button" href="{% url 'documents:document_upload' %}">Upload document</a>
+      </div>
+      {% load tz %}
+      <div class="owner-documents__table-wrap">
+        <table class="owner-documents__table">
+          <thead>
+            <tr><th>Document name</th><th>Date uploaded (IST)</th><th>Time uploaded (IST)</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+      {% for document in own_documents %}
+            <tr>
+              <td><span class="owner-documents__title">{{ document.title }}</span></td>
+              {% timezone "Asia/Kolkata" %}
+                <td class="owner-documents__time">{{ document.created_at|date:"d M Y" }}</td>
+                <td class="owner-documents__time">{{ document.created_at|date:"h:i A" }}</td>
+              {% endtimezone %}
+              <td class="owner-documents__actions">
+                <a class="button" href="{% url 'documents:document_open' document.pk %}" target="_blank" rel="noopener">Open</a>
+                <a class="button secondary" href="{% url 'documents:document_edit' document.pk %}">Edit details</a>
+                <form class="inline" method="post" action="{% url 'documents:document_delete' document.pk %}" onsubmit="return confirm('Delete this document?');">
+                  {% csrf_token %}<button class="danger" type="submit">Delete</button>
+                </form>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td class="owner-documents__empty" colspan="4">You have not uploaded any documents yet.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% elif section == "login-details" %}
+    <section class="card">
+      <form method="get">
+        <input type="hidden" name="section" value="login-details">
+        <label for="login-list">Login list</label>
+        <select id="login-list" name="list" onchange="this.form.submit()">
+          <option value="viewers" {% if login_list == "viewers" %}selected{% endif %}>Viewers list</option>
+          <option value="owners" {% if login_list == "owners" %}selected{% endif %}>Owner list</option>
+        </select>
+        <noscript><button type="submit">Show list</button></noscript>
+      </form>
+      {% if login_list == "viewers" %}
+      <h2>Viewers</h2>
+      <p>Select a viewer to assign read access, edit access, or revoke access to your documents.</p>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Login ID</th><th>Name</th><th>Email</th><th>Approval</th><th>Last login (UTC)</th><th>Document access</th></tr></thead>
+          <tbody>
+            {% for account in viewers %}
+              <tr>
+                <td>{{ account.username }}</td><td>{{ account.display_name }}</td><td>{{ account.email|default:"—" }}</td>
+                <td>{% if account.is_approved %}Approved{% else %}Pending{% endif %}</td>
+                <td>{{ account.last_login|date:"Y-m-d H:i"|default:"Never" }}</td>
+                <td><a href="{% url 'documents:owner_viewer_access' account.pk %}">Manage access</a></td>
+              </tr>
+            {% empty %}<tr><td colspan="6">There are no active viewer accounts.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <h2>Other owners</h2>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Login ID</th><th>Name</th><th>Email</th><th>Approval</th><th>Last login (UTC)</th></tr></thead>
+          <tbody>
+            {% for account in other_owners %}
+              <tr>
+                <td>{{ account.username }}</td><td>{{ account.display_name }}</td><td>{{ account.email|default:"—" }}</td>
+                <td>{% if account.is_approved %}Approved{% else %}Pending{% endif %}</td>
+                <td>{{ account.last_login|date:"Y-m-d H:i"|default:"Never" }}</td>
+              </tr>
+            {% empty %}<tr><td colspan="5">There are no other active owner accounts.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </section>
+  {% else %}
+    <section class="card">
+      <h2>Document approval requests</h2>
+      <p>Review each viewer's modified file before deciding whether to replace the current document.</p>
+      {% for change_request in pending_change_requests %}
+        <p>
+          <a href="{% url 'documents:document_change_detail' change_request.pk %}">
+            {{ change_request.document.title }} — {{ change_request.viewer.display_name }}
+          </a>
+          <span class="muted">· Submitted {{ change_request.created_at|date:"Y-m-d H:i" }} UTC</span>
+        </p>
+      {% empty %}<p class="muted">There are no pending document changes.</p>{% endfor %}
+    </section>
+  {% endif %}
+{% endblock %}

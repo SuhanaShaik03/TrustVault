@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Administrator dashboard · TrustVault{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}
+{% block content %}
+  <p class="welcome-message">Welcome, {{ user.display_name }}</p>
+  <h1>Administrator dashboard</h1>
+  <nav class="tabs" aria-label="Administrator sections">
+    <a href="?section=login-details#login-details" {% if section == "login-details" %}aria-current="page"{% endif %}>Login details</a>
+    <a href="?section=requests#requests" {% if section == "requests" %}aria-current="page"{% endif %}>Access requests ({{ pending_request_count }})</a>
+    <a href="?section=activity#activity" {% if section == "activity" %}aria-current="page"{% endif %}>Document activity</a>
+  </nav>
+
+  {% if section == "login-details" %}
+    <section id="login-details" class="card">
+      <h2>Login details</h2>
+      <p>Review user IDs and account names. Passwords are never displayed.</p>
+      <form method="get">
+        <input type="hidden" name="section" value="login-details">
+        <label for="role-filter">Select account type</label>
+        <select id="role-filter" name="role" onchange="this.form.submit()">
+          <option value="">All accounts</option>
+          {% for value, label in role_choices %}
+            <option value="{{ value }}" {% if role_filter == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <noscript><button type="submit">Show accounts</button></noscript>
+      </form>
+      <p><a class="button" href="{% url 'accounts:user_create' %}">Create user or owner</a></p>
+      <p><a class="button" href="{% url 'accounts:admin_invitations' %}">Invite administrator</a></p>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>User ID</th><th>Name</th><th>Email</th><th>Role</th><th>Approval</th><th>Delete</th></tr></thead>
+          <tbody>
+            {% for account in login_details %}
+              <tr>
+                <td>{{ account.username }}</td><td>{{ account.display_name }}</td><td>{{ account.email }}</td>
+                <td>{{ account.get_role_display }}</td>
+                <td>{% if account.is_approved %}Approved{% else %}Pending{% endif %}</td>
+                <td>
+                  {% if account.pk != user.pk and not account.is_superuser %}
+                    <form method="post" action="{% url 'accounts:user_delete' account.pk %}" onsubmit="return confirm('Delete this account?');">
+                      {% csrf_token %}<button class="danger" type="submit">Delete</button>
+                    </form>
+                  {% else %}<span class="muted">Protected</span>{% endif %}
+                </td>
+              </tr>
+            {% empty %}<tr><td colspan="6">No accounts match this selection.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% elif section == "requests" %}
+    <section id="requests" class="card">
+      <h2>Login approval requests</h2>
+      {% for access_request in pending_requests %}
+        <p>
+          <a href="{% url 'accounts:request_detail' access_request.pk %}">
+            {{ access_request.name_snapshot }} ({{ access_request.username_snapshot }})
+          </a>
+          <span class="muted">· {{ access_request.requested_at|date:"Y-m-d H:i" }} UTC</span>
+        </p>
+      {% empty %}<p class="muted">There are no pending requests.</p>{% endfor %}
+    </section>
+  {% else %}
+    <section id="activity" class="card">
+      <h2>Document sending, receiving, and modification activity</h2>
+      <p class="status">{% if audit_chain_valid %}Audit chain verified{% else %}Audit chain verification failed{% endif %}</p>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Time (UTC)</th><th>User</th><th>IP address</th><th>Action</th><th>Document / account</th><th>Details</th></tr></thead>
+          <tbody>
+            {% for event in audit_events %}
+              <tr>
+                <td>{{ event.created_at|date:"Y-m-d H:i:s" }}</td>
+                <td>{% if event.actor %}{{ event.actor.display_name }} ({{ event.actor.username }}){% else %}Deleted account{% endif %}</td>
+                <td>{{ event.ip_address|default:"—" }}</td>
+                <td>{{ event.get_action_display|default:event.action }}</td>
+                <td>{{ event.target_label }}</td><td>{{ event.details }}</td>
+              </tr>
+            {% empty %}<tr><td colspan="6">No activity recorded yet.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        Page {{ audit_events.number }} of {{ audit_events.paginator.num_pages }}
+        {% if audit_events.has_previous %}
+          <a href="?section=activity&amp;page={{ audit_events.previous_page_number }}#activity">Previous</a>
+        {% endif %}
+        {% if audit_events.has_next %}
+          <a href="?section=activity&amp;page={{ audit_events.next_page_number }}#activity">Next</a>
+        {% endif %}
+      </p>
+    </section>
+  {% endif %}
+{% endblock %}

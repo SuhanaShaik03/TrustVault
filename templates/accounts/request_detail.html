@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Review login request · TrustVault{% endblock %}
+{% block content %}
+  <section class="card">
+    <h1>Login access request</h1>
+    <p>
+      The {% if access_request.user %}{{ access_request.user.get_role_display|lower }}{% else %}account{% endif %}
+      wants to log in to their account.
+    </p>
+    <p><strong>User ID:</strong> {{ access_request.username_snapshot }}</p>
+    <p><strong>User name:</strong> {{ access_request.name_snapshot }}</p>
+    <p><strong>Status:</strong> {{ access_request.get_status_display }}</p>
+    {% if access_request.status == "pending" %}
+      <form method="post" action="{% url 'accounts:review_request' access_request.pk %}">
+        {% csrf_token %}
+        <button name="decision" value="approve" type="submit">Approve</button>
+        <button class="danger" name="decision" value="decline" type="submit">Decline</button>
+      </form>
+    {% endif %}
+    <p><a href="{% url 'accounts:admin_dashboard' %}#requests">Back to requests</a></p>
+  </section>
+{% endblock %}

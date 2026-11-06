@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Manage users · TrustVault{% endblock %}
+{% block content %}
+  <h1>Manage users</h1>
+  <p><a class="button" href="{% url 'accounts:user_create' %}">Create user or owner</a></p>
+  <section class="card">
+    {% for account in users %}
+      <p>
+        <strong>{{ account.username }}</strong> · {{ account.display_name }} · {{ account.get_role_display }}
+        {% if account.pk != user.pk and not account.is_superuser %}
+          <form class="inline" method="post" action="{% url 'accounts:user_delete' account.pk %}" onsubmit="return confirm('Delete this account?');">
+            {% csrf_token %}<button class="danger" type="submit">Delete</button>
+          </form>
+        {% endif %}
+      </p>
+    {% empty %}<p>No accounts found.</p>{% endfor %}
+  </section>
+  <p><a href="{% url 'accounts:admin_dashboard' %}">Back to dashboard</a></p>
+{% endblock %}
