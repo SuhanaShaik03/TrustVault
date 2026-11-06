@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+import dj_database_url
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -8,7 +10,12 @@ SECRET_KEY = os.environ.get(
     "DJANGO_SECRET_KEY",
     "development-only-change-this-secret-key-before-deployment",
 )
-DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() in {"1", "true", "yes"}
+IS_VERCEL = os.environ.get("VERCEL", "").lower() in {"1", "true", "yes"}
+DEBUG = not IS_VERCEL and os.environ.get("DJANGO_DEBUG", "True").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 default_allowed_hosts = [
     "localhost",
     "127.0.0.1",
@@ -73,12 +80,31 @@ TEMPLATES = [
 WSGI_APPLICATION = "trustvault.wsgi.application"
 ASGI_APPLICATION = "trustvault.asgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+if DATABASE_URL.startswith("DATABASE_URL="):
+    DATABASE_URL = DATABASE_URL[len("DATABASE_URL="):].strip()
+
+if DATABASE_URL:
+    DATABASES = {
+        "default": dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=0,
+            conn_health_checks=True,
+            ssl_require=not DEBUG,
+        )
     }
-}
+elif not DEBUG or IS_VERCEL:
+    raise RuntimeError(
+        "DATABASE_URL must be configured for production deployments. "
+        "Use a persistent PostgreSQL database; SQLite is only for local development."
+    )
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 AUTH_USER_MODEL = "accounts.User"
 AUTH_PASSWORD_VALIDATORS = [
