@@ -10,7 +10,11 @@ SECRET_KEY = os.environ.get(
     "DJANGO_SECRET_KEY",
     "development-only-change-this-secret-key-before-deployment",
 )
-IS_VERCEL = os.environ.get("VERCEL", "").lower() in {"1", "true", "yes"}
+IS_VERCEL = (
+    os.environ.get("VERCEL", "").lower() in {"1", "true", "yes"}
+    or bool(os.environ.get("VERCEL_ENV", "").strip())
+    or bool(os.environ.get("VERCEL_URL", "").strip())
+)
 DEBUG = not IS_VERCEL and os.environ.get("DJANGO_DEBUG", "True").lower() in {
     "1",
     "true",
@@ -84,27 +88,19 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 if DATABASE_URL.startswith("DATABASE_URL="):
     DATABASE_URL = DATABASE_URL[len("DATABASE_URL="):].strip()
 
-if DATABASE_URL:
-    DATABASES = {
-        "default": dj_database_url.parse(
-            DATABASE_URL,
-            conn_max_age=0,
-            conn_health_checks=True,
-            ssl_require=not DEBUG,
-        )
-    }
-elif not DEBUG or IS_VERCEL:
-    raise RuntimeError(
-        "DATABASE_URL must be configured for production deployments. "
-        "Use a persistent PostgreSQL database; SQLite is only for local development."
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL must be configured with a PostgreSQL connection URL.")
+
+DATABASES = {
+    "default": dj_database_url.parse(
+        DATABASE_URL,
+        conn_max_age=0,
+        conn_health_checks=True,
+        ssl_require=not DEBUG,
     )
-else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
-    }
+}
+if DATABASES["default"]["ENGINE"] != "django.db.backends.postgresql":
+    raise RuntimeError("DATABASE_URL must use PostgreSQL.")
 
 AUTH_USER_MODEL = "accounts.User"
 AUTH_PASSWORD_VALIDATORS = [
