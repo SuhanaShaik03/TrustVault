@@ -159,6 +159,37 @@ class DocumentPermissionTests(TestCase):
         with self.assertRaisesMessage(Exception, "Upload a PDF, DOC, or DOCX"):
             validate_document_file(SimpleUploadedFile("report.txt", b"plain text"))
 
+    def test_owner_can_upload_document_and_return_to_document_list(self):
+        self.client.force_login(self.owner)
+        upload_url = reverse("documents:document_upload")
+        document_list_url = reverse("documents:document_list")
+
+        response = self.client.get(upload_url)
+        self.assertContains(response, "Back to documents")
+        self.assertContains(response, document_list_url)
+
+        response = self.client.post(
+            upload_url,
+            {
+                "title": "New report",
+                "description": "For review",
+                "file": SimpleUploadedFile("new-report.pdf", b"%PDF-1.7 test"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        document = Document.objects.get(owner=self.owner, title="New report")
+        self.assertEqual(
+            response["Location"],
+            reverse("documents:document_detail", args=[document.pk]),
+        )
+        self.assertTrue(
+            AuditEvent.objects.filter(
+                action="document_uploaded",
+                document=document,
+            ).exists()
+        )
+
     def test_owner_dashboard_has_required_tabs_and_login_details(self):
         other_owner = User.objects.create_user(
             username="other-owner",
