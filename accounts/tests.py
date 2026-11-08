@@ -42,6 +42,12 @@ class LoginApprovalTests(TestCase):
         self.file_field.storage = self.original_storage
         self.change_file_field.storage = self.original_change_storage
 
+    def test_health_check_confirms_database_is_available(self):
+        response = self.client.get(reverse("health_check"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
     def test_valid_unapproved_login_creates_request_and_denies_session(self):
         response = self.client.post(
             reverse("accounts:login"),

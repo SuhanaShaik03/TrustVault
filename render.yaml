@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: trustvault
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --no-input
+    preDeployCommand: python manage.py migrate
+    startCommand: gunicorn trustvault.wsgi:application --bind 0.0.0.0:$PORT
+    healthCheckPath: /healthz/
+    disk:
+      name: trustvault-private-media
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.10
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trustvault-db
+          property: connectionString
+      - key: PRIVATE_MEDIA_ROOT
+        value: /var/data/media_private
+
+databases:
+  - name: trustvault-db
+    plan: basic-256mb
+    databaseName: trustvault
+    user: trustvault
