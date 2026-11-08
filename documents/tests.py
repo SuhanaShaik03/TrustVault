@@ -3,7 +3,6 @@ from django.core.files.storage import InMemoryStorage
 from datetime import datetime, timezone
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
-
 from accounts.models import User
 from documents.models import AuditEvent, Document, DocumentChangeRequest, DocumentGrant
 from documents.services import record_event, verify_audit_chain

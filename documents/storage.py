@@ -1,7 +1,6 @@
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage
 
-
 if settings.IS_VERCEL:
     from storages.backends.s3 import S3Storage
 

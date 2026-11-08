@@ -83,6 +83,7 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = "trustvault.urls"
 
+
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
