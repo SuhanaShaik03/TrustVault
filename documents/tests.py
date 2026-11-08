@@ -1,12 +1,43 @@
+import tempfile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.files.storage import InMemoryStorage
 from datetime import datetime, timezone
+from pathlib import Path
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
+from unittest.mock import patch
 from accounts.models import User
 from documents.models import AuditEvent, Document, DocumentChangeRequest, DocumentGrant
+from documents.storage import PrivateDocumentStorage
 from documents.services import record_event, verify_audit_chain
 from documents.validators import validate_document_file
+
+
+class PrivateDocumentStorageTests(TestCase):
+    def test_render_without_mounted_disk_uses_writable_fallback(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            invalid_root = base_dir / "not-a-directory"
+            invalid_root.write_text("blocker", encoding="utf-8")
+
+            with (
+                patch("documents.storage.settings.IS_RENDER", True),
+                patch("documents.storage.settings.PRIVATE_MEDIA_ROOT", invalid_root / "media"),
+                patch("documents.storage.settings.BASE_DIR", base_dir),
+                self.assertLogs("documents.storage", level="WARNING"),
+            ):
+                storage = PrivateDocumentStorage()
+
+            self.assertEqual(Path(storage.location), base_dir / "media_private")
+            saved_name = storage.save(
+                "documents/storage-probe.pdf",
+                SimpleUploadedFile("storage-probe.pdf", b"%PDF-1.7 test"),
+            )
+            try:
+                with storage.open(saved_name, "rb") as uploaded:
+                    self.assertEqual(uploaded.read(), b"%PDF-1.7 test")
+            finally:
+                storage.delete(saved_name)
 
 
 class DocumentPermissionTests(TestCase):
