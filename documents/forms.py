@@ -3,7 +3,6 @@ from django import forms
 from documents.models import Document, DocumentChangeRequest, DocumentGrant
 from documents.validators import validate_document_file
 
-
 class DocumentForm(forms.ModelForm):
     class Meta:
         model = Document

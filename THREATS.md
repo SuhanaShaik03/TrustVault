@@ -1,5 +1,4 @@
 # TrustVault Threat Register
-
 | Threat | Control | Automated test | Accepted limitation |
 |---|---|---|---|
 | Guessing an ID to view or download an unshared file | Every detail/download request checks owner or current grant; denied IDs return 404 | `test_unshared_user_cannot_view_or_download_and_attempt_is_audited` | Anonymous attempts are redirected to login and not attributed. |

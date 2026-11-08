@@ -2,6 +2,7 @@
 
 TrustVault currently serves HTML pages; it does not expose a JSON API. Django's CSRF middleware protects unsafe requests. The health endpoint performs a database query and returns only a generic status.
 
+
 | Method and path | Allowed caller | Behavior |
 |---|---|---|
 | `GET /healthz/` | Public | Returns `200 {"status":"ok"}` when the database responds; otherwise returns `503`. |
