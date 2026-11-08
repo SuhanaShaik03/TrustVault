@@ -190,6 +190,23 @@ class DocumentPermissionTests(TestCase):
             ).exists()
         )
 
+    def test_owner_upload_rejects_unsupported_file_with_visible_error(self):
+        self.client.force_login(self.owner)
+
+        response = self.client.post(
+            reverse("documents:document_upload"),
+            {
+                "title": "Unsupported file",
+                "description": "Should not be saved",
+                "file": SimpleUploadedFile("AnyDesk.exe", b"MZ" + b"x" * 32),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Upload a PDF, DOC, or DOCX document.")
+        self.assertFalse(Document.objects.filter(title="Unsupported file").exists())
+        self.assertFalse(AuditEvent.objects.filter(action="document_uploaded").exists())
+
     def test_owner_dashboard_has_required_tabs_and_login_details(self):
         other_owner = User.objects.create_user(
             username="other-owner",

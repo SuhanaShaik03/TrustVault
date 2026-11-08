@@ -318,7 +318,7 @@ class LoginApprovalTests(TestCase):
         self.assertContains(response, "Login details")
         self.assertContains(response, self.viewer.username)
         self.assertNotContains(response, "Login approval requests")
-        self.assertNotContains(response, "Document sending, receiving, and modification activity")
+        self.assertNotContains(response, "Audit chain verified")
 
         response = self.client.get(
             reverse("accounts:admin_dashboard"),
@@ -336,7 +336,7 @@ class LoginApprovalTests(TestCase):
             reverse("accounts:admin_dashboard"),
             {"section": "activity"},
         )
-        self.assertContains(response, "Document sending, receiving, and modification activity")
+        self.assertContains(response, "Activity log")
         self.assertContains(response, "IP address")
         self.assertNotContains(response, "Select account type")
 
@@ -356,6 +356,34 @@ class LoginApprovalTests(TestCase):
                 self.assertContains(response, username)
                 self.assertContains(response, 'name="section" value="login-details"')
                 self.assertEqual(response.context["role_filter"], role)
+
+    def test_declined_login_request_status_is_shown_in_login_details(self):
+        access_request = LoginAccessRequest.objects.create(
+            user=self.viewer,
+            username_snapshot=self.viewer.username,
+            name_snapshot=self.viewer.display_name,
+        )
+        self.client.force_login(self.admin)
+
+        review_response = self.client.post(
+            reverse("accounts:review_request", args=[access_request.pk]),
+            {"decision": "decline"},
+        )
+        self.assertRedirects(review_response, reverse("accounts:admin_dashboard"))
+
+        dashboard_response = self.client.get(reverse("accounts:admin_dashboard"))
+        self.assertContains(dashboard_response, "Declined")
+        account = next(
+            account
+            for account in dashboard_response.context["login_details"]
+            if account.pk == self.viewer.pk
+        )
+        self.assertEqual(
+            account.latest_login_request_status,
+            LoginAccessRequest.Status.DECLINED,
+        )
+        self.viewer.refresh_from_db()
+        self.assertFalse(self.viewer.is_approved)
 
     def test_admin_dashboard_paginates_complete_activity_history(self):
         for index in range(55):

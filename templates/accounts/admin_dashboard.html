@@ -7,7 +7,7 @@
   <nav class="tabs" aria-label="Administrator sections">
     <a href="?section=login-details#login-details" {% if section == "login-details" %}aria-current="page"{% endif %}>Login details</a>
     <a href="?section=requests#requests" {% if section == "requests" %}aria-current="page"{% endif %}>Access requests ({{ pending_request_count }})</a>
-    <a href="?section=activity#activity" {% if section == "activity" %}aria-current="page"{% endif %}>Document activity</a>
+    <a href="?section=activity#activity" {% if section == "activity" %}aria-current="page"{% endif %}>Activity log</a>
   </nav>
 
   {% if section == "login-details" %}
@@ -35,7 +35,19 @@
               <tr>
                 <td>{{ account.username }}</td><td>{{ account.display_name }}</td><td>{{ account.email }}</td>
                 <td>{{ account.get_role_display }}</td>
-                <td>{% if account.is_approved %}Approved{% else %}Pending{% endif %}</td>
+                <td>
+                  {% if account.latest_login_request_status == "approved" %}
+                    Approved
+                  {% elif account.latest_login_request_status == "declined" %}
+                    Declined
+                  {% elif account.latest_login_request_status == "pending" %}
+                    Pending
+                  {% elif account.is_approved %}
+                    Approved
+                  {% else %}
+                    Pending
+                  {% endif %}
+                </td>
                 <td>
                   {% if account.pk != user.pk and not account.is_superuser %}
                     <form method="post" action="{% url 'accounts:user_delete' account.pk %}" onsubmit="return confirm('Delete this account?');">
@@ -63,7 +75,7 @@
     </section>
   {% else %}
     <section id="activity" class="card">
-      <h2>Document sending, receiving, and modification activity</h2>
+      <h2>Activity log</h2>
       <p class="status">{% if audit_chain_valid %}Audit chain verified{% else %}Audit chain verification failed{% endif %}</p>
       <div style="overflow-x:auto">
         <table>
