@@ -6,7 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import OuterRef, Q, Subquery
 from django.http import HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -140,7 +140,13 @@ def admin_dashboard(request):
         ).count(),
     }
     if section == "login-details":
-        users = User.objects.order_by("role", "username")
+        users = User.objects.annotate(
+            latest_login_request_status=Subquery(
+                LoginAccessRequest.objects.filter(user=OuterRef("pk"))
+                .order_by("-requested_at", "-pk")
+                .values("status")[:1]
+            )
+        ).order_by("role", "username")
         if role_filter:
             users = users.filter(role=role_filter)
         context.update(

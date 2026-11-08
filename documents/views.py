@@ -20,6 +20,7 @@ from documents.forms import (
 )
 from documents.models import Document, DocumentChangeRequest, DocumentGrant
 from documents.services import record_event, review_document_change
+from documents.validators import MAX_DOCUMENT_SIZE
 
 
 def owner_required(view_func):
@@ -63,6 +64,7 @@ def document_list(request):
             section = "documents"
         context = {
             "section": section,
+            "max_document_size_mib": MAX_DOCUMENT_SIZE // (1024 * 1024),
             "own_documents": Document.objects.filter(owner=request.user).order_by("-created_at"),
             "pending_change_count": DocumentChangeRequest.objects.filter(
                 document__owner=request.user,

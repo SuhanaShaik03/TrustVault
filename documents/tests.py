@@ -180,6 +180,15 @@ class DocumentPermissionTests(TestCase):
         with self.assertRaisesMessage(Exception, "valid PDF signature"):
             validate_document_file(upload)
 
+    def test_upload_validator_rejects_files_over_ten_mib(self):
+        upload = SimpleUploadedFile(
+            "large.pdf",
+            b"%PDF-1.7" + b"x" * (10 * 1024 * 1024),
+        )
+
+        with self.assertRaisesMessage(Exception, "10 MiB or smaller"):
+            validate_document_file(upload)
+
     def test_upload_validator_accepts_only_supported_document_types(self):
         validate_document_file(SimpleUploadedFile("report.pdf", b"%PDF-1.7 content"))
         validate_document_file(SimpleUploadedFile("report.docx", b"PK\x03\x04content"))
@@ -267,6 +276,7 @@ class DocumentPermissionTests(TestCase):
         self.assertContains(response, "Open")
         self.assertContains(response, "Edit details")
         self.assertContains(response, "Delete")
+        self.assertContains(response, "Maximum upload size: 10 MiB per file.")
 
     def test_viewer_has_assigned_and_uploaded_document_tabs(self):
         read_document = Document.objects.create(
