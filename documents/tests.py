@@ -12,7 +12,6 @@ from documents.storage import PrivateDocumentStorage
 from documents.services import record_event, verify_audit_chain
 from documents.validators import validate_document_file
 
-
 class PrivateDocumentStorageTests(TestCase):
     def test_render_without_mounted_disk_uses_writable_fallback(self):
         with tempfile.TemporaryDirectory() as temp_dir:

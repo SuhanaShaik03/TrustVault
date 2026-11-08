@@ -2,7 +2,6 @@ from pathlib import Path
 
 from django.core.exceptions import ValidationError
 
-
 MAX_DOCUMENT_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx"}
 DOC_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
