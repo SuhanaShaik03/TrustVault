@@ -15,6 +15,23 @@ IS_VERCEL = (
     or bool(os.environ.get("VERCEL_ENV", "").strip())
     or bool(os.environ.get("VERCEL_URL", "").strip())
 )
+AWS_STORAGE_BUCKET_NAME = os.environ.get("AWS_STORAGE_BUCKET_NAME", "").strip()
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip()
+AWS_S3_REGION_NAME = os.environ.get("AWS_S3_REGION_NAME", "us-east-1").strip()
+AWS_S3_ENDPOINT_URL = os.environ.get("AWS_S3_ENDPOINT_URL", "").strip() or None
+AWS_S3_FILE_OVERWRITE = False
+AWS_QUERYSTRING_AUTH = True
+AWS_DEFAULT_ACL = None
+
+if IS_VERCEL and not all(
+    (AWS_STORAGE_BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+):
+    raise RuntimeError(
+        "Vercel deployments require AWS_STORAGE_BUCKET_NAME, AWS_ACCESS_KEY_ID, "
+        "and AWS_SECRET_ACCESS_KEY for private document storage."
+    )
+
 DEBUG = not IS_VERCEL and os.environ.get("DJANGO_DEBUG", "True").lower() in {
     "1",
     "true",

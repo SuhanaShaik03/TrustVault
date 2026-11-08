@@ -13,6 +13,7 @@
         {% if field.help_text %}<small class="muted">{{ field.help_text }}</small>{% endif %}
       {% endfor %}
       <button type="submit">Save</button>
+      <a class="button secondary" href="{% url 'documents:document_list' %}">Back to documents</a>
     </form>
   </section>
 {% endblock %}
