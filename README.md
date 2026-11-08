@@ -36,7 +36,7 @@ $env:DJANGO_DEBUG = "True"
 
 ## Deploy on Render
 
-The root `render.yaml` defines a Django web service, managed PostgreSQL database, private-media disk, static-file collection, database migration step, and database-aware health check. Review the selected Render plans and pricing before creating the Blueprint. The persistent disk requires a paid web service and keeps this single web instance's uploaded files between deploys; use private object storage if you need multiple web instances.
+The root `render.yaml` defines a Django web service, managed PostgreSQL database, private-media disk, static-file collection, database migration step, and database-aware health check. Review the selected Render plans and pricing before creating the Blueprint. The persistent disk requires a paid web service and keeps this single web instance's uploaded files between deploys; use private object storage if you need multiple web instances. If using the free web service without a disk, uploads fall back to writable application storage and can be lost when Render replaces the instance. Render logs a warning when this fallback is used.
 
 Render supplies `DATABASE_URL` from the managed database and generates `DJANGO_SECRET_KEY`. `DJANGO_DEBUG=False` is set in the Blueprint. Keep `DATABASE_URL` and `DJANGO_SECRET_KEY` secret; never commit them. Production fails closed if PostgreSQL or the secret key is missing. Do not set `DJANGO_DEBUG=True` on a deployed service.
 
