@@ -4,13 +4,24 @@ from documents.models import Document, DocumentChangeRequest, DocumentGrant
 from documents.validators import validate_document_file
 
 class DocumentForm(forms.ModelForm):
+    file = forms.FileField(
+        help_text="Supported formats: PDF and DOC only. Maximum upload size: 10 MiB.",
+        validators=[validate_document_file],
+        widget=forms.ClearableFileInput(attrs={"accept": ".pdf,.doc"}),
+    )
+
     class Meta:
         model = Document
         fields = ("title", "description", "file")
 
 
 class DocumentEditForm(forms.ModelForm):
-    file = forms.FileField(required=False, validators=[validate_document_file])
+    file = forms.FileField(
+        required=False,
+        help_text="Supported formats: PDF and DOC only. Maximum upload size: 10 MiB.",
+        validators=[validate_document_file],
+        widget=forms.ClearableFileInput(attrs={"accept": ".pdf,.doc"}),
+    )
 
     class Meta:
         model = Document
@@ -34,7 +45,12 @@ class GrantForm(forms.ModelForm):
 
 
 class DocumentChangeRequestForm(forms.ModelForm):
-    submitted_file = forms.FileField(required=True, validators=[validate_document_file])
+    submitted_file = forms.FileField(
+        required=True,
+        help_text="Supported formats: PDF and DOC only. Maximum upload size: 10 MiB.",
+        validators=[validate_document_file],
+        widget=forms.ClearableFileInput(attrs={"accept": ".pdf,.doc"}),
+    )
 
     class Meta:
         model = DocumentChangeRequest

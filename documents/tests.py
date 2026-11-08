@@ -109,6 +109,23 @@ class DocumentPermissionTests(TestCase):
         self.assertEqual(edit.status_code, 404)
         self.assertEqual(submit_change.status_code, 404)
 
+    def test_viewer_open_missing_document_file_returns_not_found_not_server_error(self):
+        DocumentGrant.objects.create(
+            document=self.document,
+            user=self.viewer,
+            permission=DocumentGrant.Permission.READ,
+        )
+        self.storage.delete(self.document.file.name)
+        self.client.force_login(self.viewer)
+
+        with self.assertLogs("documents.views", level="ERROR"):
+            response = self.client.get(
+                reverse("documents:document_open", args=[self.document.pk])
+            )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(AuditEvent.objects.filter(action="document_opened").exists())
+
     def test_edit_grant_cannot_change_original_document_directly(self):
         DocumentGrant.objects.create(
             document=self.document,
@@ -136,9 +153,8 @@ class DocumentPermissionTests(TestCase):
                 "title": self.document.title,
                 "description": self.document.description,
                 "file": SimpleUploadedFile(
-                    "replacement.docx",
-                    b"PK\x03\x04updated document",
-                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "replacement.doc",
+                    b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1updated document",
                 ),
             },
         )
@@ -190,12 +206,31 @@ class DocumentPermissionTests(TestCase):
 
     def test_upload_validator_accepts_only_supported_document_types(self):
         validate_document_file(SimpleUploadedFile("report.pdf", b"%PDF-1.7 content"))
-        validate_document_file(SimpleUploadedFile("report.docx", b"PK\x03\x04content"))
         validate_document_file(
             SimpleUploadedFile("report.doc", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1content")
         )
-        with self.assertRaisesMessage(Exception, "Upload a PDF, DOC, or DOCX"):
+        with self.assertRaisesMessage(Exception, "Unsupported file type. Upload a PDF or DOC document only."):
+            validate_document_file(SimpleUploadedFile("report.docx", b"PK\x03\x04content"))
+        with self.assertRaisesMessage(Exception, "Unsupported file type. Upload a PDF or DOC document only."):
             validate_document_file(SimpleUploadedFile("report.txt", b"plain text"))
+
+    def test_docx_upload_shows_form_error_and_does_not_save_document(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            reverse("documents:document_upload"),
+            {
+                "title": "Unsupported DOCX",
+                "description": "",
+                "file": SimpleUploadedFile("report.docx", b"PK\x03\x04content"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Unsupported file type. Upload a PDF or DOC document only.",
+        )
+        self.assertFalse(Document.objects.filter(title="Unsupported DOCX").exists())
 
     def test_owner_can_upload_document_and_return_to_document_list(self):
         self.client.force_login(self.owner)
@@ -205,6 +240,10 @@ class DocumentPermissionTests(TestCase):
         response = self.client.get(upload_url)
         self.assertContains(response, "Back to documents")
         self.assertContains(response, document_list_url)
+        self.assertContains(
+            response,
+            "Supported formats: PDF and DOC only. Maximum upload size: 10 MiB.",
+        )
 
         response = self.client.post(
             upload_url,
@@ -275,7 +314,7 @@ class DocumentPermissionTests(TestCase):
         self.assertContains(response, "Open")
         self.assertContains(response, "Edit details")
         self.assertContains(response, "Delete")
-        self.assertContains(response, "Maximum upload size: 10 MiB per file.")
+        self.assertNotContains(response, "Maximum upload size:")
 
     def test_viewer_has_assigned_and_uploaded_document_tabs(self):
         read_document = Document.objects.create(
@@ -293,11 +332,31 @@ class DocumentPermissionTests(TestCase):
             user=self.viewer,
             permission=DocumentGrant.Permission.EDIT,
         )
+        self.client.force_login(self.viewer)
+        response = self.client.get(
+            reverse("documents:document_change_submit", args=[edit_grant.document_id])
+        )
+        self.assertContains(response, "Submitted file")
+        self.assertContains(
+            response,
+            "Supported formats: PDF and DOC only. Maximum upload size: 10 MiB.",
+        )
+        field_heading = response.content.index(b">Submitted file</label>")
+        upload_guidance = response.content.index(
+            b"Supported formats: PDF and DOC only. Maximum upload size: 10 MiB."
+        )
+        file_input = response.content.index(b'type="file"')
+        self.assertLess(field_heading, upload_guidance)
+        self.assertLess(upload_guidance, file_input)
+
         DocumentChangeRequest.objects.create(
             document=self.document,
             viewer=self.viewer,
-            submitted_file=SimpleUploadedFile("revision.docx", b"PK\x03\x04revision"),
-            uploaded_filename="revision.docx",
+            submitted_file=SimpleUploadedFile(
+                "revision.doc",
+                b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1revision",
+            ),
+            uploaded_filename="revision.doc",
             status=DocumentChangeRequest.Status.PENDING,
         )
         DocumentChangeRequest.objects.create(
@@ -307,8 +366,6 @@ class DocumentPermissionTests(TestCase):
             uploaded_filename="accepted.pdf",
             status=DocumentChangeRequest.Status.APPROVED,
         )
-        self.client.force_login(self.viewer)
-
         response = self.client.get(reverse("documents:document_list"))
         self.assertContains(response, "Assigned documents")
         self.assertContains(response, "Uploaded documents")
@@ -318,6 +375,7 @@ class DocumentPermissionTests(TestCase):
             reverse("documents:document_change_submit", args=[edit_grant.document_id]),
             count=1,
         )
+
         self.assertNotContains(
             response,
             reverse("documents:document_change_submit", args=[read_grant.document_id]),
@@ -328,7 +386,7 @@ class DocumentPermissionTests(TestCase):
         )
 
         response = self.client.get(reverse("documents:document_list"), {"tab": "uploaded"})
-        self.assertContains(response, "revision.docx")
+        self.assertContains(response, "revision.doc")
         self.assertContains(response, "Pending approval")
         self.assertContains(response, "accepted.pdf")
         self.assertContains(response, "Approved")
