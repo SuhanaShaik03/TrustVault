@@ -137,9 +137,8 @@ class DocumentPermissionTests(TestCase):
                 "title": self.document.title,
                 "description": self.document.description,
                 "file": SimpleUploadedFile(
-                    "replacement.docx",
-                    b"PK\x03\x04updated document",
-                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "replacement.doc",
+                    b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1updated document",
                 ),
             },
         )
@@ -191,12 +190,28 @@ class DocumentPermissionTests(TestCase):
 
     def test_upload_validator_accepts_only_supported_document_types(self):
         validate_document_file(SimpleUploadedFile("report.pdf", b"%PDF-1.7 content"))
-        validate_document_file(SimpleUploadedFile("report.docx", b"PK\x03\x04content"))
         validate_document_file(
             SimpleUploadedFile("report.doc", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1content")
         )
-        with self.assertRaisesMessage(Exception, "Upload a PDF, DOC, or DOCX"):
+        with self.assertRaisesMessage(Exception, "Upload a PDF or DOC document only"):
+            validate_document_file(SimpleUploadedFile("report.docx", b"PK\x03\x04content"))
+        with self.assertRaisesMessage(Exception, "Upload a PDF or DOC document only"):
             validate_document_file(SimpleUploadedFile("report.txt", b"plain text"))
+
+    def test_docx_upload_returns_a_form_error_without_creating_a_document(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            reverse("documents:document_upload"),
+            {
+                "title": "Unsupported DOCX",
+                "description": "",
+                "file": SimpleUploadedFile("report.docx", b"PK\x03\x04content"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Unsupported file type. Upload a PDF or DOC document only.")
+        self.assertFalse(Document.objects.filter(title="Unsupported DOCX").exists())
 
     def test_owner_can_upload_document_and_return_to_document_list(self):
         self.client.force_login(self.owner)
@@ -297,8 +312,11 @@ class DocumentPermissionTests(TestCase):
         DocumentChangeRequest.objects.create(
             document=self.document,
             viewer=self.viewer,
-            submitted_file=SimpleUploadedFile("revision.docx", b"PK\x03\x04revision"),
-            uploaded_filename="revision.docx",
+            submitted_file=SimpleUploadedFile(
+                "revision.doc",
+                b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1revision",
+            ),
+            uploaded_filename="revision.doc",
             status=DocumentChangeRequest.Status.PENDING,
         )
         DocumentChangeRequest.objects.create(
@@ -329,7 +347,7 @@ class DocumentPermissionTests(TestCase):
         )
 
         response = self.client.get(reverse("documents:document_list"), {"tab": "uploaded"})
-        self.assertContains(response, "revision.docx")
+        self.assertContains(response, "revision.doc")
         self.assertContains(response, "Pending approval")
         self.assertContains(response, "accepted.pdf")
         self.assertContains(response, "Approved")

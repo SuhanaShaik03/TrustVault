@@ -7,7 +7,7 @@ TrustVault is a Django application for sharing private documents with administra
 - Viewer and owner accounts require administrator approval before login. Administrator registration requires an invitation.
 - Owners upload and manage documents, grant approved viewers read or edit access, and review edit requests. A viewer's proposed replacement takes effect only after owner approval.
 - Administrators manage accounts and login requests and review document activity.
-- PDF, DOC, and DOCX uploads are limited to 10 MiB and stored privately. Document access is checked for each request.
+- PDF and DOC uploads are limited to 10 MiB and stored privately. DOCX and other formats are rejected. Document access is checked for each request.
 
 ## Run locally (Windows PowerShell)
 
