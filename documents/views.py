@@ -1,3 +1,4 @@
+import logging
 from functools import wraps
 from mimetypes import guess_type
 from pathlib import Path
@@ -21,6 +22,20 @@ from documents.forms import (
 from documents.models import Document, DocumentChangeRequest, DocumentGrant
 from documents.services import record_event, review_document_change
 from documents.validators import MAX_DOCUMENT_SIZE
+
+
+logger = logging.getLogger(__name__)
+
+
+def open_document_file(document):
+    try:
+        return document.file.open("rb")
+    except OSError as error:
+        logger.exception(
+            "Unable to open stored file for document %s.",
+            document.pk,
+        )
+        raise Http404("The document file is unavailable.") from error
 
 
 def owner_required(view_func):
@@ -172,6 +187,7 @@ def document_detail(request, document_id):
 @login_required
 def document_download(request, document_id):
     document = get_document_access(request, document_id)
+    document_file = open_document_file(document)
     record_event(
         actor=request.user,
         action="document_downloaded",
@@ -180,7 +196,7 @@ def document_download(request, document_id):
         request=request,
     )
     return FileResponse(
-        document.file.open("rb"),
+        document_file,
         as_attachment=True,
         filename=document.file.name.rsplit("/", 1)[-1],
     )
@@ -189,6 +205,7 @@ def document_download(request, document_id):
 @login_required
 def document_open(request, document_id):
     document = get_document_access(request, document_id)
+    document_file = open_document_file(document)
     record_event(
         actor=request.user,
         action="document_opened",
@@ -199,7 +216,7 @@ def document_open(request, document_id):
     filename = Path(document.file.name).name
     content_type = guess_type(filename)[0] or "application/octet-stream"
     return FileResponse(
-        document.file.open("rb"),
+        document_file,
         as_attachment=False,
         filename=filename,
         content_type=content_type,
