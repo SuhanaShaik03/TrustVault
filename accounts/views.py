@@ -11,7 +11,6 @@ from django.http import HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
-
 from accounts.forms import LoginForm, RegistrationForm, UserCreateForm
 from accounts.models import LoginAccessRequest, User
 from accounts.services import (

@@ -120,7 +120,6 @@ class DocumentPermissionTests(TestCase):
         opened.close()
         self.assertEqual(edit.status_code, 404)
         self.assertEqual(submit_change.status_code, 404)
-
     def test_viewer_open_missing_document_file_returns_not_found_not_server_error(self):
         DocumentGrant.objects.create(
             document=self.document,
