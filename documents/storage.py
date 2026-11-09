@@ -7,9 +7,14 @@ from django.core.files.storage import FileSystemStorage
 
 class PrivateDocumentStorage(FileSystemStorage):
     def __init__(self):
-        location = Path(settings.PRIVATE_MEDIA_ROOT)
+        super().__init__(location=Path(settings.PRIVATE_MEDIA_ROOT))
+
+    def _save(self, name, content):
         if settings.IS_RENDER:
+            location = Path(self.location)
             try:
+                if not location.parent.is_dir():
+                    raise OSError("The persistent media disk is not mounted.")
                 location.mkdir(parents=True, exist_ok=True)
                 with tempfile.NamedTemporaryFile(dir=location):
                     pass
@@ -18,4 +23,4 @@ class PrivateDocumentStorage(FileSystemStorage):
                     "Configured PRIVATE_MEDIA_ROOT is not writable on Render. "
                     "Attach a writable persistent disk or configure PRIVATE_MEDIA_ROOT."
                 ) from error
-        super().__init__(location=location)
+        return super()._save(name, content)

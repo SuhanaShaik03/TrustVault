@@ -13,7 +13,7 @@ from documents.services import record_event, verify_audit_chain
 from documents.validators import validate_document_file
 
 class PrivateDocumentStorageTests(TestCase):
-    def test_render_without_mounted_disk_fails_instead_of_using_ephemeral_storage(self):
+    def test_render_storage_defers_disk_check_until_a_file_is_saved(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base_dir = Path(temp_dir)
             invalid_root = base_dir / "not-a-directory"
@@ -23,8 +23,11 @@ class PrivateDocumentStorageTests(TestCase):
                 patch("documents.storage.settings.IS_RENDER", True),
                 patch("documents.storage.settings.PRIVATE_MEDIA_ROOT", invalid_root / "media"),
             ):
+                storage = PrivateDocumentStorage()
+                self.assertEqual(Path(storage.location), invalid_root / "media")
+
                 with self.assertRaisesRegex(RuntimeError, "persistent disk"):
-                    PrivateDocumentStorage()
+                    storage.save("document.pdf", SimpleUploadedFile("document.pdf", b"%PDF-1.7"))
 
             self.assertFalse((base_dir / "media_private").exists())
 
