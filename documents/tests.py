@@ -118,7 +118,25 @@ class DocumentPermissionTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 404)
+        self.assertContains(
+            response,
+            "contact the document owner",
+            status_code=404,
+        )
         self.assertFalse(AuditEvent.objects.filter(action="document_opened").exists())
+
+    def test_owner_missing_document_file_shows_replace_action(self):
+        self.storage.delete(self.document.file.name)
+        self.client.force_login(self.owner)
+
+        with self.assertLogs("documents.views", level="ERROR"):
+            response = self.client.get(
+                reverse("documents:document_open", args=[self.document.pk])
+            )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertContains(response, "Document file unavailable", status_code=404)
+        self.assertContains(response, "Replace document file", status_code=404)
 
     def test_owner_preview_missing_submitted_file_returns_not_found_not_server_error(self):
         change_request = DocumentChangeRequest.objects.create(
@@ -176,6 +194,32 @@ class DocumentPermissionTests(TestCase):
         self.assertFalse(storage.exists(old_name))
         event = AuditEvent.objects.get(action="document_modified")
         self.assertTrue(event.details["file_replaced"])
+
+    def test_owner_can_restore_missing_file_by_replacing_it(self):
+        self.storage.delete(self.document.file.name)
+        self.client.force_login(self.owner)
+
+        response = self.client.post(
+            reverse("documents:document_edit", args=[self.document.pk]),
+            {
+                "title": self.document.title,
+                "description": self.document.description,
+                "file": SimpleUploadedFile(
+                    "restored.pdf",
+                    b"%PDF-1.7 restored document",
+                ),
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        opened = self.client.get(
+            reverse("documents:document_open", args=[self.document.pk])
+        )
+        self.assertEqual(opened.status_code, 200)
+        self.assertEqual(
+            b"".join(opened.streaming_content),
+            b"%PDF-1.7 restored document",
+        )
 
     def test_owner_can_share_and_revoke_access(self):
         self.client.force_login(self.owner)
@@ -426,7 +470,12 @@ class DocumentPermissionTests(TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertContains(
             response,
-            "The document could not be saved.",
+            "No separate admin approval is needed",
+            status_code=503,
+        )
+        self.assertContains(
+            response,
+            "check the Render storage disk",
             status_code=503,
         )
 

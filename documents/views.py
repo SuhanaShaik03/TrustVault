@@ -38,6 +38,18 @@ def open_document_file(document):
         raise Http404("The document file is unavailable.") from error
 
 
+def document_file_unavailable_response(request, document):
+    return render(
+        request,
+        "documents/document_file_unavailable.html",
+        {
+            "document": document,
+            "is_owner": document.owner_id == request.user.pk,
+        },
+        status=404,
+    )
+
+
 def owner_required(view_func):
     @wraps(view_func)
     @login_required
@@ -147,7 +159,10 @@ def document_upload(request):
             )
             form.add_error(
                 "file",
-                "The document could not be saved. Please try again or contact an administrator.",
+                "No separate admin approval is needed for an approved Owner to upload. "
+                "The server could not save this file to private storage. "
+                "Please try again later; if the problem continues, the deployment "
+                "administrator should check the Render storage disk.",
             )
             return render(
                 request,
@@ -203,7 +218,10 @@ def document_detail(request, document_id):
 @login_required
 def document_download(request, document_id):
     document = get_document_access(request, document_id)
-    document_file = open_document_file(document)
+    try:
+        document_file = open_document_file(document)
+    except Http404:
+        return document_file_unavailable_response(request, document)
     record_event(
         actor=request.user,
         action="document_downloaded",
@@ -221,7 +239,10 @@ def document_download(request, document_id):
 @login_required
 def document_open(request, document_id):
     document = get_document_access(request, document_id)
-    document_file = open_document_file(document)
+    try:
+        document_file = open_document_file(document)
+    except Http404:
+        return document_file_unavailable_response(request, document)
     record_event(
         actor=request.user,
         action="document_opened",
