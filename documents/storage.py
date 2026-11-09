@@ -6,7 +6,6 @@ from pathlib import Path
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage
 
-
 logger = logging.getLogger(__name__)
 
 

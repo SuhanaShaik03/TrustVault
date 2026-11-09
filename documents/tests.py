@@ -119,7 +119,6 @@ class DocumentPermissionTests(TestCase):
             description="Internal",
             file=SimpleUploadedFile("report.pdf", b"%PDF-1.4 confidential text", content_type="application/pdf"),
         )
-
     def tearDown(self):
         for document in Document.objects.all():
             document.file.delete(save=False)
