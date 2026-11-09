@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Document unavailable · TrustVault{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}
+{% block content %}
+  <section class="card">
+    <h1>Document file unavailable</h1>
+    <p>The record for <strong>{{ document.title }}</strong> exists, but its file could not be found in private storage.</p>
+    {% if is_owner %}
+      <p>To restore access, replace the missing file with your original PDF or DOC document.</p>
+      <a class="button" href="{% url 'documents:document_edit' document.pk %}">Replace document file</a>
+    {% else %}
+      <p>Please contact the document owner and ask them to replace the missing file.</p>
+    {% endif %}
+    <a class="button secondary" href="{% url 'documents:document_list' %}">Back to documents</a>
+  </section>
+{% endblock %}

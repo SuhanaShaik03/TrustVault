@@ -120,6 +120,7 @@ class DocumentPermissionTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertFalse(AuditEvent.objects.filter(action="document_opened").exists())
 
+
     def test_owner_preview_missing_submitted_file_returns_not_found_not_server_error(self):
         change_request = DocumentChangeRequest.objects.create(
             document=self.document,

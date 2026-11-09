@@ -10,7 +10,6 @@ from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
-
 from accounts.models import User
 from documents.forms import (
     DocumentChangeRequestForm,
