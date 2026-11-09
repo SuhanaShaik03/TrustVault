@@ -1,23 +1,21 @@
 # TrustVault
 
-TrustVault is a Django application for sharing private documents with administrator, owner, and viewer roles. PostgreSQL is required in production. Set `DJANGO_DEBUG=True` for local development to use the existing `db.sqlite3` file when `DATABASE_URL` is not set; otherwise Django defaults to production mode and requires PostgreSQL.
+TrustVault is a Django app for privately sharing documents between administrators, owners, and viewers. Production uses PostgreSQL; local development can use SQLite.
 
 ## Features
 
-
-- Viewer and owner accounts require administrator approval before login. Administrator registration requires an invitation.
-- Owners upload and manage documents, grant approved viewers read or edit access, and review edit requests. A viewer's proposed replacement takes effect only after owner approval.
-- Administrators manage accounts and login requests and review document activity.
-- PDF and DOC uploads are limited to 10 MiB and stored privately. DOCX and other formats are rejected. Document access is checked for each request.
+- Owners upload, open, download, edit, and delete their documents.
+- Owners grant or revoke viewer read/edit access. Viewers with edit access can submit replacements for owner approval.
+- Viewer and owner accounts need administrator approval to log in. Administrator registration requires a one-time invitation.
+- Documents are private. PDF and DOC files up to 10 MiB are accepted; DOCX and other formats are rejected.
+- Administrators manage accounts and login approvals and review the audit log.
 
 ## Run locally (Windows PowerShell)
 
-For the default local setup, Django uses `db.sqlite3` and preserves any existing data in that file. To use PostgreSQL locally instead, create a database and user, then set the connection URL (replace the placeholders):
+SQLite is used when `DJANGO_DEBUG=True` and `DATABASE_URL` is unset. Existing `db.sqlite3` data is preserved. To use PostgreSQL locally, set `DATABASE_URL` to your PostgreSQL connection URL.
 
 ```powershell
 $env:DJANGO_DEBUG = "True"
-# Optional: set this to use PostgreSQL locally instead of SQLite.
-# $env:DATABASE_URL = "postgresql://<user>:<password>@localhost:5432/trustvault"
 py -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 .venv\Scripts\python.exe manage.py migrate
@@ -25,32 +23,21 @@ py -m venv .venv
 .venv\Scripts\python.exe manage.py runserver
 ```
 
-Open http://127.0.0.1:8000/. The administrator dashboard is at `/accounts/admin/`; Django admin is at `/django-admin/`.
+Open http://127.0.0.1:8000/. The administrator dashboard is `/accounts/admin/`; Django admin is `/django-admin/`.
 
 Run checks and tests:
 
 ```powershell
-$env:DJANGO_DEBUG = "True"
 .venv\Scripts\python.exe manage.py check
 .venv\Scripts\python.exe manage.py test
+.venv\Scripts\python.exe manage.py migrate --check
+.venv\Scripts\python.exe manage.py collectstatic --no-input
 ```
 
 ## Deploy on Render
 
-The root `render.yaml` defines a Django web service, managed PostgreSQL database, private-media disk, static-file collection, database migration step, and database-aware health check. Review the selected Render plans and pricing before creating the Blueprint. The persistent disk requires a paid web service and keeps this single web instance's uploaded files between deploys; use private object storage if you need multiple web instances. If using the free web service without a disk, uploads fall back to writable application storage and can be lost when Render replaces the instance. Render logs a warning when this fallback is used.
+`render.yaml` configures Gunicorn, PostgreSQL, static files, migrations, a health check, and a persistent private-media disk mounted at `/var/data`. Render sets `DATABASE_URL`, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=False`, `PRIVATE_MEDIA_ROOT=/var/data/media_private`, and `TRUSTED_PROXY_COUNT=1` so audit events record the client address from Render's forwarded-IP header. Set `TRUSTED_PROXY_COUNT` to the number of trusted proxies in front of the app; it defaults to `0`, which ignores forwarded-IP headers. The app will not fall back to temporary storage if the configured Render media directory is not writable.
 
-Render supplies `DATABASE_URL` from the managed database and generates `DJANGO_SECRET_KEY`. `DJANGO_DEBUG=False` is set in the Blueprint. Keep `DATABASE_URL` and `DJANGO_SECRET_KEY` secret; never commit them. Production fails closed if PostgreSQL or the secret key is missing. Do not set `DJANGO_DEBUG=True` on a deployed service.
+Deploy with a Render Blueprint, then verify `/healthz/` returns `{"status":"ok"}`. Create the first administrator from the Render Shell using `python manage.py createsuperuser`. The Blueprint creates a new database; it does not import local database records or files. Back them up and migrate separately if needed. Never reset a production database.
 
-To deploy:
-
-1. Push this repository to GitHub.
-2. In Render, create a new Blueprint from the repository and review the web, database, and persistent-disk plans and costs.
-3. Apply the Blueprint and wait for the build and pre-deploy migration to finish.
-4. Verify the service's `/healthz/` endpoint returns `{"status":"ok"}`.
-5. Create the initial administrator from the Render Shell with `python manage.py createsuperuser`.
-
-The Blueprint creates a new PostgreSQL database. It does not copy records from local `db.sqlite3` or files from local `media_private`; back up and migrate those separately if they are needed in production. Never point the local SQLite database at Render or reset an existing production database.
-
-Static assets are served by WhiteNoise. User documents remain private and are served only through authorization-checked views; the Render disk is mounted at `/var/data/media_private`.
-
-The audit log is hash-linked and records the direct connection IP; forwarded IP headers are not trusted. The chain is tamper-evident, not tamper-proof. Revoking access blocks future app requests but cannot recall downloaded files, and local document storage is not encrypted at rest.
+Keep secrets out of Git. Documents are served only after authorization checks. Revoking a grant blocks future requests, but cannot recall downloaded copies. The audit chain is tamper-evident, not tamper-proof; local document storage is not encrypted at rest.

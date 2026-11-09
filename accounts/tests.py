@@ -2,7 +2,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from django.core.files.storage import InMemoryStorage
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.urls import reverse
 
 from accounts.models import LoginAccessRequest, User
@@ -47,6 +47,29 @@ class LoginApprovalTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_logout_requires_post_and_valid_csrf_token(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.admin)
+        logout_url = reverse("accounts:logout")
+
+        response = client.get(logout_url)
+        self.assertEqual(response.status_code, 405)
+        self.assertIn("_auth_user_id", client.session)
+
+        response = client.post(logout_url)
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("_auth_user_id", client.session)
+
+        client.get(reverse("accounts:admin_dashboard"))
+        csrf_token = client.cookies["csrftoken"].value
+        response = client.post(
+            logout_url,
+            HTTP_X_CSRFTOKEN=csrf_token,
+        )
+
+        self.assertRedirects(response, reverse("accounts:login"))
+        self.assertNotIn("_auth_user_id", client.session)
 
     def test_valid_unapproved_login_creates_request_and_denies_session(self):
         response = self.client.post(

@@ -23,6 +23,13 @@ IS_RENDER = (
 )
 IS_DEPLOYED = IS_VERCEL or IS_RENDER
 
+try:
+    TRUSTED_PROXY_COUNT = int(os.environ.get("TRUSTED_PROXY_COUNT", "0"))
+except ValueError as error:
+    raise RuntimeError("TRUSTED_PROXY_COUNT must be a non-negative integer.") from error
+if TRUSTED_PROXY_COUNT < 0:
+    raise RuntimeError("TRUSTED_PROXY_COUNT must be a non-negative integer.")
+
 debug_setting = os.environ.get("DJANGO_DEBUG")
 if debug_setting is None:
     DEBUG = False

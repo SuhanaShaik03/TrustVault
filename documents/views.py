@@ -423,8 +423,16 @@ def document_change_preview(request, request_id):
     )
     filename = Path(change_request.submitted_file.name).name
     content_type = guess_type(filename)[0] or "application/octet-stream"
+    try:
+        submitted_file = change_request.submitted_file.open("rb")
+    except OSError as error:
+        logger.exception(
+            "Unable to open submitted file for change request %s.",
+            change_request.pk,
+        )
+        raise Http404("The submitted document is unavailable.") from error
     return FileResponse(
-        change_request.submitted_file.open("rb"),
+        submitted_file,
         as_attachment=False,
         filename=filename,
         content_type=content_type,

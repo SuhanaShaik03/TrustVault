@@ -2,6 +2,7 @@ import hashlib
 import ipaddress
 import json
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -9,6 +10,27 @@ from documents.models import AuditEvent, Document, DocumentChangeRequest
 
 
 GENESIS_HASH = "0" * 64
+
+
+def _request_ip_address(request):
+    trusted_proxy_count = settings.TRUSTED_PROXY_COUNT
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if trusted_proxy_count and forwarded_for:
+        forwarded_addresses = [address.strip() for address in forwarded_for.split(",")]
+        if len(forwarded_addresses) >= trusted_proxy_count:
+            candidate = forwarded_addresses[-trusted_proxy_count]
+            try:
+                return str(ipaddress.ip_address(candidate))
+            except ValueError:
+                pass
+
+    remote_addr = request.META.get("REMOTE_ADDR")
+    if not remote_addr:
+        return None
+    try:
+        return str(ipaddress.ip_address(remote_addr))
+    except ValueError as error:
+        raise ValueError("The request has an invalid remote IP address.") from error
 
 
 def _event_hash(
@@ -54,12 +76,7 @@ def record_event(
     document_reference = str(document.pk) if document else ""
     ip_address = None
     if request is not None:
-        remote_addr = request.META.get("REMOTE_ADDR")
-        if remote_addr:
-            try:
-                ip_address = str(ipaddress.ip_address(remote_addr))
-            except ValueError as error:
-                raise ValueError("The request has an invalid remote IP address.") from error
+        ip_address = _request_ip_address(request)
     event_hash = _event_hash(
         previous_hash,
         actor_reference,

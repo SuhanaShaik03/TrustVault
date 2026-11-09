@@ -3,7 +3,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.files.storage import InMemoryStorage
 from datetime import datetime, timezone
 from pathlib import Path
-from django.test import RequestFactory, TestCase
+from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 from unittest.mock import patch
 from accounts.models import User
@@ -13,7 +13,7 @@ from documents.services import record_event, verify_audit_chain
 from documents.validators import validate_document_file
 
 class PrivateDocumentStorageTests(TestCase):
-    def test_render_without_mounted_disk_uses_writable_fallback(self):
+    def test_render_without_mounted_disk_fails_instead_of_using_ephemeral_storage(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base_dir = Path(temp_dir)
             invalid_root = base_dir / "not-a-directory"
@@ -22,21 +22,11 @@ class PrivateDocumentStorageTests(TestCase):
             with (
                 patch("documents.storage.settings.IS_RENDER", True),
                 patch("documents.storage.settings.PRIVATE_MEDIA_ROOT", invalid_root / "media"),
-                patch("documents.storage.settings.BASE_DIR", base_dir),
-                self.assertLogs("documents.storage", level="WARNING"),
             ):
-                storage = PrivateDocumentStorage()
+                with self.assertRaisesRegex(RuntimeError, "persistent disk"):
+                    PrivateDocumentStorage()
 
-            self.assertEqual(Path(storage.location), base_dir / "media_private")
-            saved_name = storage.save(
-                "documents/storage-probe.pdf",
-                SimpleUploadedFile("storage-probe.pdf", b"%PDF-1.7 test"),
-            )
-            try:
-                with storage.open(saved_name, "rb") as uploaded:
-                    self.assertEqual(uploaded.read(), b"%PDF-1.7 test")
-            finally:
-                storage.delete(saved_name)
+            self.assertFalse((base_dir / "media_private").exists())
 
 
 class DocumentPermissionTests(TestCase):
@@ -126,6 +116,23 @@ class DocumentPermissionTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertFalse(AuditEvent.objects.filter(action="document_opened").exists())
 
+    def test_owner_preview_missing_submitted_file_returns_not_found_not_server_error(self):
+        change_request = DocumentChangeRequest.objects.create(
+            document=self.document,
+            viewer=self.viewer,
+            submitted_file=SimpleUploadedFile("revision.pdf", b"%PDF-1.7 revision"),
+            uploaded_filename="revision.pdf",
+        )
+        self.storage.delete(change_request.submitted_file.name)
+        self.client.force_login(self.owner)
+
+        with self.assertLogs("documents.views", level="ERROR"):
+            response = self.client.get(
+                reverse("documents:document_change_preview", args=[change_request.pk])
+            )
+
+        self.assertEqual(response.status_code, 404)
+
     def test_edit_grant_cannot_change_original_document_directly(self):
         DocumentGrant.objects.create(
             document=self.document,
@@ -189,6 +196,132 @@ class DocumentPermissionTests(TestCase):
         )
         self.assertFalse(DocumentGrant.objects.filter(pk=grant.pk).exists())
         self.assertTrue(AuditEvent.objects.filter(action="document_access_revoked").exists())
+
+    def test_revoking_a_grant_immediately_denies_document_access(self):
+        grant = DocumentGrant.objects.create(
+            document=self.document,
+            user=self.viewer,
+            permission=DocumentGrant.Permission.READ,
+        )
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            reverse(
+                "documents:document_revoke",
+                args=[self.document.pk, grant.pk],
+            )
+        )
+        self.assertRedirects(
+            response,
+            reverse("documents:document_detail", args=[self.document.pk]),
+        )
+
+        self.client.force_login(self.viewer)
+        for route_name in (
+            "document_detail",
+            "document_open",
+            "document_download",
+        ):
+            with self.subTest(route=route_name):
+                response = self.client.get(
+                    reverse(f"documents:{route_name}", args=[self.document.pk])
+                )
+                self.assertEqual(response.status_code, 404)
+
+    def test_owner_can_open_download_and_delete_document(self):
+        file_name = self.document.file.name
+        self.client.force_login(self.owner)
+
+        opened = self.client.get(
+            reverse("documents:document_open", args=[self.document.pk])
+        )
+        self.assertEqual(opened.status_code, 200)
+        self.assertEqual(b"".join(opened.streaming_content), b"%PDF-1.4 confidential text")
+
+        downloaded = self.client.get(
+            reverse("documents:document_download", args=[self.document.pk])
+        )
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertTrue(downloaded["Content-Disposition"].startswith("attachment"))
+        self.assertEqual(
+            b"".join(downloaded.streaming_content),
+            b"%PDF-1.4 confidential text",
+        )
+
+        response = self.client.post(
+            reverse("documents:document_delete", args=[self.document.pk])
+        )
+        self.assertRedirects(response, reverse("documents:document_list"))
+        self.assertFalse(Document.objects.filter(pk=self.document.pk).exists())
+        self.assertFalse(self.storage.exists(file_name))
+        self.assertTrue(
+            AuditEvent.objects.filter(
+                action="document_deleted",
+                target_label="Quarterly report",
+            ).exists()
+        )
+        self.assertTrue(verify_audit_chain())
+
+    def test_owner_cannot_access_another_owners_document_by_id(self):
+        other_owner = User.objects.create_user(
+            username="other-owner",
+            password="SecurePass123!test",
+            role=User.Role.OWNER,
+            is_approved=True,
+        )
+        other_document = Document.objects.create(
+            owner=other_owner,
+            title="Private report",
+            file=SimpleUploadedFile("private.pdf", b"%PDF-1.4 private"),
+        )
+        self.client.force_login(self.owner)
+
+        for route_name in (
+            "document_detail",
+            "document_open",
+            "document_download",
+            "document_edit",
+            "document_share",
+            "document_delete",
+        ):
+            with self.subTest(route=route_name):
+                method = (
+                    self.client.post
+                    if route_name == "document_delete"
+                    else self.client.get
+                )
+                response = method(
+                    reverse(f"documents:{route_name}", args=[other_document.pk])
+                )
+                self.assertEqual(response.status_code, 404)
+
+        self.assertTrue(Document.objects.filter(pk=other_document.pk).exists())
+
+    def test_administrator_role_does_not_grant_document_access(self):
+        administrator = User.objects.create_user(
+            username="administrator",
+            password="SecurePass123!test",
+            role=User.Role.ADMIN,
+            is_approved=True,
+        )
+        self.client.force_login(administrator)
+
+        for route_name in ("document_detail", "document_open", "document_download"):
+            with self.subTest(route=route_name):
+                response = self.client.get(
+                    reverse(f"documents:{route_name}", args=[self.document.pk])
+                )
+                self.assertEqual(response.status_code, 404)
+
+    def test_document_delete_requires_csrf(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.owner)
+
+        response = client.post(
+            reverse("documents:document_delete", args=[self.document.pk])
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(Document.objects.filter(pk=self.document.pk).exists())
 
     def test_upload_validator_rejects_mismatched_pdf_signature(self):
         upload = SimpleUploadedFile("fake.pdf", b"not a pdf")
@@ -527,6 +660,54 @@ class AuditChainTests(TestCase):
         self.assertTrue(verify_audit_chain())
         AuditEvent.objects.filter(pk=event.pk).update(ip_address="203.0.113.9")
         self.assertFalse(verify_audit_chain())
+
+    def test_trusted_forwarded_ip_is_recorded_instead_of_proxy_ip(self):
+        request = RequestFactory().get(
+            "/",
+            REMOTE_ADDR="10.0.0.2",
+            HTTP_X_FORWARDED_FOR="203.0.113.8",
+        )
+        with patch("documents.services.settings.TRUSTED_PROXY_COUNT", 1):
+            event = record_event(
+                actor=self.actor,
+                action="document_received",
+                target_label="report",
+                request=request,
+            )
+
+        self.assertEqual(event.ip_address, "203.0.113.8")
+        self.assertTrue(verify_audit_chain())
+
+    def test_forwarded_ip_uses_proxy_count_and_ignores_untrusted_header(self):
+        forwarded_request = RequestFactory().get(
+            "/",
+            REMOTE_ADDR="10.0.0.3",
+            HTTP_X_FORWARDED_FOR="203.0.113.8, 198.51.100.7",
+        )
+        with patch("documents.services.settings.TRUSTED_PROXY_COUNT", 2):
+            forwarded_event = record_event(
+                actor=self.actor,
+                action="document_received",
+                target_label="trusted report",
+                request=forwarded_request,
+            )
+
+        untrusted_request = RequestFactory().get(
+            "/",
+            REMOTE_ADDR="203.0.113.9",
+            HTTP_X_FORWARDED_FOR="192.0.2.55",
+        )
+        with patch("documents.services.settings.TRUSTED_PROXY_COUNT", 0):
+            untrusted_event = record_event(
+                actor=self.actor,
+                action="document_received",
+                target_label="direct report",
+                request=untrusted_request,
+            )
+
+        self.assertEqual(forwarded_event.ip_address, "203.0.113.8")
+        self.assertEqual(untrusted_event.ip_address, "203.0.113.9")
+        self.assertTrue(verify_audit_chain())
 
     def test_deleting_referenced_user_does_not_break_audit_chain(self):
         record_event(actor=self.actor, action="account_deleted", target_label=self.actor.username)
