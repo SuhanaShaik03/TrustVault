@@ -412,6 +412,9 @@ class DocumentPermissionTests(TestCase):
 
         self.assertEqual(response.status_code, 302)
         document = Document.objects.get(owner=self.owner, title="New report")
+        self.assertFalse(
+            DocumentChangeRequest.objects.filter(document=document).exists()
+        )
         self.assertEqual(
             response["Location"],
             reverse("documents:document_detail", args=[document.pk]),
@@ -445,9 +448,10 @@ class DocumentPermissionTests(TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertContains(
             response,
-            "The document could not be saved.",
+            "does not require Admin approval",
             status_code=503,
         )
+        self.assertContains(response, "Render disk", status_code=503)
 
     def test_owner_dashboard_has_required_tabs_and_login_details(self):
         other_owner = User.objects.create_user(

@@ -158,7 +158,9 @@ def document_upload(request):
             )
             form.add_error(
                 "file",
-                "The document could not be saved. Please try again or contact an administrator.",
+                "This Owner upload does not require Admin approval. The server could not "
+                "save the file to private storage. Please contact the deployment "
+                "administrator to check the Render disk.",
             )
             return render(
                 request,
