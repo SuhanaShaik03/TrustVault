@@ -404,6 +404,32 @@ class DocumentPermissionTests(TestCase):
             ).exists()
         )
 
+    def test_owner_upload_reports_storage_failure_without_creating_document(self):
+        self.client.force_login(self.owner)
+        with (
+            patch.object(
+                Document,
+                "save",
+                side_effect=RuntimeError("Private media storage is unavailable."),
+            ),
+            self.assertLogs("documents.views", level="ERROR"),
+        ):
+            response = self.client.post(
+                reverse("documents:document_upload"),
+                {
+                    "title": "Storage failure report",
+                    "description": "",
+                    "file": SimpleUploadedFile("report.pdf", b"%PDF-1.7 report"),
+                },
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertContains(
+            response,
+            "The document could not be saved.",
+            status_code=503,
+        )
+
     def test_owner_dashboard_has_required_tabs_and_login_details(self):
         other_owner = User.objects.create_user(
             username="other-owner",

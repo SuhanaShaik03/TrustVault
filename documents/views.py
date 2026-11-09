@@ -138,7 +138,23 @@ def document_upload(request):
     if request.method == "POST" and form.is_valid():
         document = form.save(commit=False)
         document.owner = request.user
-        document.save()
+        try:
+            document.save()
+        except (OSError, RuntimeError):
+            logger.exception(
+                "Unable to save uploaded document for owner %s.",
+                request.user.pk,
+            )
+            form.add_error(
+                "file",
+                "The document could not be saved. Please try again or contact an administrator.",
+            )
+            return render(
+                request,
+                "documents/document_form.html",
+                {"form": form, "heading": "Upload document"},
+                status=503,
+            )
         record_event(
             actor=request.user,
             action="document_uploaded",
