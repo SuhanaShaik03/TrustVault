@@ -12,6 +12,7 @@ from documents.storage import PrivateDocumentStorage
 from documents.services import record_event, verify_audit_chain
 from documents.validators import validate_document_file
 
+
 class PrivateDocumentStorageTests(TestCase):
     def test_render_storage_defers_disk_check_until_a_file_is_saved(self):
         with tempfile.TemporaryDirectory() as temp_dir:
