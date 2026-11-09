@@ -4,7 +4,7 @@ from pathlib import Path
 from django.conf import settings
 from django.db import models
 
-from documents.storage import PrivateDocumentStorage
+from documents.storage import DatabaseDocumentStorage
 from documents.validators import validate_document_file
 
 
@@ -18,6 +18,11 @@ def change_request_upload_path(_instance, filename):
     return f"pending_changes/{uuid.uuid4().hex}{extension}"
 
 
+class StoredDocumentFile(models.Model):
+    name = models.CharField(max_length=255, primary_key=True)
+    content = models.BinaryField()
+
+
 class Document(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(
@@ -28,7 +33,7 @@ class Document(models.Model):
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     file = models.FileField(
-        storage=PrivateDocumentStorage(),
+        storage=DatabaseDocumentStorage(),
         upload_to=document_upload_path,
         validators=[validate_document_file],
     )
@@ -82,7 +87,7 @@ class DocumentChangeRequest(models.Model):
         related_name="document_change_requests",
     )
     submitted_file = models.FileField(
-        storage=PrivateDocumentStorage(),
+        storage=DatabaseDocumentStorage(),
         upload_to=change_request_upload_path,
         validators=[validate_document_file],
         blank=True,

@@ -153,9 +153,10 @@ def review_document_change(change_request, owner, approve, request=None):
     if approve:
         document.file.name = submitted_file
         document.save(update_fields=["file", "updated_at"])
+        submitted_storage.delete(old_file)
     else:
         change_request.submitted_file = ""
-        transaction.on_commit(lambda: submitted_storage.delete(submitted_file))
+        submitted_storage.delete(submitted_file)
 
     change_request.save(update_fields=["status", "reviewed_by", "reviewed_at", "submitted_file"])
     record_event(
@@ -169,6 +170,4 @@ def review_document_change(change_request, owner, approve, request=None):
         },
         request=request,
     )
-    if approve:
-        transaction.on_commit(lambda: submitted_storage.delete(old_file))
     return True

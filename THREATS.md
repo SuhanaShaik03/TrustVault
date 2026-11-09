@@ -25,7 +25,7 @@ Automated tests in `accounts/tests.py` and `documents/tests.py` cover the follow
 - **Upload validation:** Tests check unsupported file types, the 10 MiB size limit, mismatched PDF signatures, and that a rejected DOCX upload is not saved. The validator accepts PDF and DOC files with the expected signatures.
 - **CSRF protection:** Tests check that logout requires POST with a valid CSRF token and that document deletion rejects requests without valid CSRF protection.
 - **Audit integrity and IP capture:** Tests check that audit-chain tampering is detected, that event IP addresses are included in the hash, and that configured trusted-proxy settings select the forwarded client IP without trusting that header when no proxy is configured.
-- **Private storage behavior:** A test checks that Render storage fails explicitly when the configured persistent media directory is not writable instead of silently falling back to ephemeral storage.
+- **Database file storage:** Tests check that uploaded file bytes are saved, read, and deleted through the database-backed storage layer, and that an upload rolls back if its audit event cannot be saved.
 
 These tests verify specific application behavior; they do not replace manual penetration testing, deployment review, or a dedicated security automation suite.
 
@@ -34,7 +34,7 @@ These tests verify specific application behavior; they do not replace manual pen
 1. **Broader security test coverage:** Add a dedicated automated security suite for path traversal, cross-user access across all relevant endpoints, role escalation, injection handling, and security-sensitive regression cases. Include browser-level or end-to-end coverage where appropriate.
 2. **Abuse detection and alerting:** Consider rate limiting and monitoring for repeated failed logins, suspicious access attempts, and other unusual activity. Email notifications for failed or rejected logins and document sharing or uploads are not currently implemented.
 3. **File threat protection:** Current validation checks file extension, size, and selected file signatures; it is not malware scanning. Add a scanning pipeline and review handling of potentially unsafe document content before production use.
-4. **Production audit and data protection:** The audit chain is tamper-evident, not tamper-proof; an operator with database access could alter it. Consider sending signed audit checkpoints to a separate trust boundary. Review encryption at rest, backups, retention, HTTPS, and private storage/reverse-proxy configuration as part of deployment operations.
+4. **Production audit and data protection:** The audit chain is tamper-evident, not tamper-proof; an operator with database access could alter it. Consider sending signed audit checkpoints to a separate trust boundary. Review encryption at rest, backups, retention, HTTPS, and reverse-proxy configuration as part of deployment operations. File contents are stored in PostgreSQL and share its storage capacity and backup lifecycle.
 
 ## Current threat limitations
 
