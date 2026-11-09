@@ -4,6 +4,7 @@ from django.core.files.storage import InMemoryStorage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
+from unittest.mock import patch
 
 from accounts.models import LoginAccessRequest, User
 from documents.models import AuditEvent, Document, DocumentChangeRequest, DocumentGrant
@@ -307,6 +308,50 @@ class LoginApprovalTests(TestCase):
         self.assertEqual(response.status_code, 403)
         response = self.client.post(reverse("accounts:admin_invitations"))
         self.assertEqual(response.status_code, 403)
+        response = self.client.get(reverse("accounts:storage_health"))
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_can_check_storage_health_without_exposing_path(self):
+        self.client.force_login(self.admin)
+        with patch(
+            "accounts.views.check_private_storage",
+            return_value={
+                "disk_mounted": True,
+                "path_configured": True,
+                "directory_exists": True,
+                "directory_writable": True,
+                "write_ok": True,
+                "read_ok": True,
+                "delete_ok": True,
+                "healthy": True,
+            },
+        ):
+            response = self.client.get(reverse("accounts:storage_health"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Persistent disk mounted: Yes")
+        self.assertNotContains(response, "/var/data")
+        self.assertNotContains(response, "PRIVATE_MEDIA_ROOT")
+
+    def test_storage_health_returns_unavailable_when_probe_fails(self):
+        self.client.force_login(self.admin)
+        with patch(
+            "accounts.views.check_private_storage",
+            return_value={
+                "disk_mounted": False,
+                "path_configured": True,
+                "directory_exists": False,
+                "directory_writable": False,
+                "write_ok": False,
+                "read_ok": False,
+                "delete_ok": False,
+                "healthy": False,
+            },
+        ):
+            response = self.client.get(reverse("accounts:storage_health"))
+
+        self.assertEqual(response.status_code, 503)
+        self.assertContains(response, "Private storage is not ready", status_code=503)
 
     def test_admin_created_owner_still_requires_login_approval(self):
         self.client.force_login(self.admin)

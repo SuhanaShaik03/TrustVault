@@ -1,10 +1,11 @@
 import tempfile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.files.storage import InMemoryStorage
+from django.db import DatabaseError
 from datetime import datetime, timezone
 from pathlib import Path
 from django.test import Client, RequestFactory, TestCase
-from django.urls import reverse
+from django.urls import Resolver404, resolve, reverse
 from unittest.mock import patch
 from accounts.models import User
 from documents.models import AuditEvent, Document, DocumentChangeRequest, DocumentGrant
@@ -20,6 +21,8 @@ class PrivateDocumentStorageTests(TestCase):
             with (
                 patch("documents.storage.settings.IS_RENDER", True),
                 patch("documents.storage.settings.PRIVATE_MEDIA_ROOT", media_root),
+                patch("documents.storage.settings.PRIVATE_MEDIA_DISK_MOUNT", temp_dir),
+                patch("documents.storage.os.path.ismount", return_value=True),
             ):
                 storage = PrivateDocumentStorage()
                 saved_name = storage.save(
@@ -41,14 +44,52 @@ class PrivateDocumentStorageTests(TestCase):
             with (
                 patch("documents.storage.settings.IS_RENDER", True),
                 patch("documents.storage.settings.PRIVATE_MEDIA_ROOT", invalid_root / "media"),
+                patch("documents.storage.settings.PRIVATE_MEDIA_DISK_MOUNT", base_dir),
+                patch("documents.storage.os.path.ismount", return_value=True),
             ):
                 storage = PrivateDocumentStorage()
                 self.assertEqual(Path(storage.location), invalid_root / "media")
 
-                with self.assertRaisesRegex(RuntimeError, "persistent disk"):
+                with self.assertRaisesRegex(RuntimeError, "not writable"):
                     storage.save("document.pdf", SimpleUploadedFile("document.pdf", b"%PDF-1.7"))
 
             self.assertFalse((base_dir / "media_private").exists())
+
+    def test_render_storage_refuses_ephemeral_path_when_disk_is_not_mounted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            media_root = Path(temp_dir) / "media_private"
+            with (
+                patch("documents.storage.settings.IS_RENDER", True),
+                patch("documents.storage.settings.PRIVATE_MEDIA_ROOT", media_root),
+                patch("documents.storage.settings.PRIVATE_MEDIA_DISK_MOUNT", temp_dir),
+                patch("documents.storage.os.path.ismount", return_value=False),
+            ):
+                storage = PrivateDocumentStorage()
+                with self.assertRaisesRegex(RuntimeError, "not mounted"):
+                    storage.save(
+                        "documents/report.pdf",
+                        SimpleUploadedFile("report.pdf", b"%PDF-1.7"),
+                    )
+
+            self.assertFalse(media_root.exists())
+
+    def test_storage_health_probe_checks_write_read_delete(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            media_root = Path(temp_dir) / "media_private"
+            with (
+                patch("documents.storage.settings.IS_RENDER", False),
+                patch("documents.storage.settings.PRIVATE_MEDIA_ROOT", media_root),
+                patch("documents.storage.settings.PRIVATE_MEDIA_DISK_MOUNT", temp_dir),
+            ):
+                result = PrivateDocumentStorage().check_health()
+
+            self.assertTrue(result["healthy"])
+            self.assertTrue(result["directory_exists"])
+            self.assertTrue(result["directory_writable"])
+            self.assertTrue(result["write_ok"])
+            self.assertTrue(result["read_ok"])
+            self.assertTrue(result["delete_ok"])
+            self.assertEqual(list(media_root.iterdir()), [])
 
 
 class DocumentPermissionTests(TestCase):
@@ -405,6 +446,23 @@ class DocumentPermissionTests(TestCase):
         )
         self.assertFalse(Document.objects.filter(title="Unsupported DOCX").exists())
 
+    def test_oversized_upload_is_rejected_without_saving_document(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            reverse("documents:document_upload"),
+            {
+                "title": "Oversized report",
+                "file": SimpleUploadedFile(
+                    "large.pdf",
+                    b"%PDF-1.7" + b"x" * (10 * 1024 * 1024),
+                ),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "10 MiB or smaller")
+        self.assertFalse(Document.objects.filter(title="Oversized report").exists())
+
     def test_owner_can_upload_document_and_return_to_document_list(self):
         self.client.force_login(self.owner)
         upload_url = reverse("documents:document_upload")
@@ -442,6 +500,75 @@ class DocumentPermissionTests(TestCase):
                 document=document,
             ).exists()
         )
+        self.assertEqual(document.owner, self.owner)
+        self.assertEqual(document.description, "For review")
+        self.assertTrue(self.storage.exists(document.file.name))
+        with self.storage.open(document.file.name, "rb") as saved_file:
+            self.assertEqual(saved_file.read(), b"%PDF-1.7 test")
+
+    def test_non_owner_cannot_upload_document(self):
+        self.client.force_login(self.viewer)
+        response = self.client.post(
+            reverse("documents:document_upload"),
+            {
+                "title": "Unauthorized upload",
+                "file": SimpleUploadedFile("report.pdf", b"%PDF-1.7 report"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Document.objects.filter(title="Unauthorized upload").exists())
+
+    def test_upload_rejects_missing_csrf_token(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.owner)
+        response = client.post(
+            reverse("documents:document_upload"),
+            {
+                "title": "CSRF upload",
+                "file": SimpleUploadedFile("report.pdf", b"%PDF-1.7 report"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Document.objects.filter(title="CSRF upload").exists())
+
+    def test_database_failure_cleans_up_uploaded_file(self):
+        self.client.force_login(self.owner)
+        saved_names = []
+        original_save = self.storage.save
+
+        def capture_saved_file(name, content, max_length=None):
+            saved_name = original_save(name, content, max_length=max_length)
+            saved_names.append(saved_name)
+            return saved_name
+
+        with (
+            patch.object(self.storage, "save", side_effect=capture_saved_file),
+            patch(
+                "documents.views.record_event",
+                side_effect=DatabaseError("Simulated audit persistence failure."),
+            ),
+            self.assertLogs("documents.views", level="ERROR"),
+        ):
+            response = self.client.post(
+                reverse("documents:document_upload"),
+                {
+                    "title": "Database failure report",
+                    "file": SimpleUploadedFile("report.pdf", b"%PDF-1.7 report"),
+                },
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(len(saved_names), 1)
+        self.assertFalse(self.storage.exists(saved_names[0]))
+        self.assertFalse(
+            Document.objects.filter(title="Database failure report").exists()
+        )
+
+    def test_private_upload_path_is_not_publicly_routed(self):
+        with self.assertRaises(Resolver404):
+            resolve("/media/documents/private.pdf")
 
     def test_owner_upload_reports_storage_failure_without_creating_document(self):
         self.client.force_login(self.owner)
@@ -469,6 +596,37 @@ class DocumentPermissionTests(TestCase):
             status_code=503,
         )
         self.assertContains(response, "Render disk", status_code=503)
+
+    def test_storage_failure_logs_backend_path_errno_and_traceback(self):
+        self.client.force_login(self.owner)
+        with (
+            patch.object(
+                self.storage,
+                "_save",
+                side_effect=OSError(13, "Permission denied"),
+            ),
+            self.assertLogs("documents.views", level="ERROR") as captured,
+        ):
+            response = self.client.post(
+                reverse("documents:document_upload"),
+                {
+                    "title": "Permission failure report",
+                    "file": SimpleUploadedFile("report.pdf", b"%PDF-1.7 report"),
+                },
+            )
+
+        self.assertEqual(response.status_code, 503)
+        log_output = "\n".join(captured.output)
+        expected_backend = (
+            f"{self.storage.__class__.__module__}."
+            f"{self.storage.__class__.__name__}"
+        )
+        self.assertIn(f"backend={expected_backend}", log_output)
+        self.assertIn("directory_exists=", log_output)
+        self.assertIn("directory_writable=", log_output)
+        self.assertIn("PermissionError", log_output)
+        self.assertIn("errno=13", log_output)
+        self.assertIn("Traceback", log_output)
 
     def test_owner_dashboard_has_required_tabs_and_login_details(self):
         other_owner = User.objects.create_user(
