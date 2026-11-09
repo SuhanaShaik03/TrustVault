@@ -6,6 +6,7 @@ from pathlib import Path
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.db import DatabaseError, transaction
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -21,10 +22,51 @@ from documents.forms import (
 )
 from documents.models import Document, DocumentChangeRequest, DocumentGrant
 from documents.services import record_event, review_document_change
+from documents.storage import storage_diagnostics
 from documents.validators import MAX_DOCUMENT_SIZE
 
 
 logger = logging.getLogger(__name__)
+
+
+def _log_upload_failure(message, file_field, error, **context):
+    diagnostics = storage_diagnostics(file_field.storage)
+    cause = error.__cause__ or error
+    logger.error(
+        "%s backend=%s path=%s mount_path=%s disk_mounted=%s "
+        "path_configured=%s directory_exists=%s directory_writable=%s "
+        "exception_class=%s errno=%s cause_class=%s cause_errno=%s context=%s",
+        message,
+        diagnostics["backend"],
+        diagnostics["path"],
+        diagnostics["mount_path"],
+        diagnostics["disk_mounted"],
+        diagnostics["path_configured"],
+        diagnostics["directory_exists"],
+        diagnostics["directory_writable"],
+        type(error).__name__,
+        getattr(error, "errno", None),
+        type(cause).__name__,
+        getattr(cause, "errno", None),
+        context,
+        exc_info=(type(error), error, error.__traceback__),
+    )
+
+
+def _save_upload_and_record_event(instance, file_field, event_details):
+    storage = file_field.storage
+    original_name = file_field.name
+    try:
+        with transaction.atomic():
+            instance.save()
+            record_event(**event_details)
+    except (DatabaseError, OSError, RuntimeError, ValueError):
+        if file_field.name and file_field.name != original_name:
+            try:
+                storage.delete(file_field.name)
+            except (OSError, RuntimeError):
+                logger.exception("Unable to clean up an incomplete document upload.")
+        raise
 
 
 def open_document_file(document):
@@ -151,11 +193,23 @@ def document_upload(request):
         document = form.save(commit=False)
         document.owner = request.user
         try:
-            document.save()
-        except (OSError, RuntimeError):
-            logger.exception(
-                "Unable to save uploaded document for owner %s.",
-                request.user.pk,
+            _save_upload_and_record_event(
+                document,
+                document.file,
+                {
+                    "actor": request.user,
+                    "action": "document_uploaded",
+                    "target_label": document.title,
+                    "document": document,
+                    "request": request,
+                },
+            )
+        except (OSError, RuntimeError, DatabaseError, ValueError) as error:
+            _log_upload_failure(
+                "Unable to save uploaded document.",
+                document.file,
+                error,
+                owner_id=request.user.pk,
             )
             form.add_error(
                 "file",
@@ -169,13 +223,6 @@ def document_upload(request):
                 {"form": form, "heading": "Upload document"},
                 status=503,
             )
-        record_event(
-            actor=request.user,
-            action="document_uploaded",
-            target_label=document.title,
-            document=document,
-            request=request,
-        )
         messages.success(request, "Document uploaded.")
         return redirect("documents:document_detail", document_id=document.pk)
     return render(request, "documents/document_form.html", {"form": form, "heading": "Upload document"})
@@ -268,18 +315,47 @@ def document_edit(request, document_id):
     form = DocumentEditForm(request.POST or None, request.FILES or None, instance=document)
     if request.method == "POST" and form.is_valid():
         storage = document.file.storage
-        document = form.save()
+        document = form.save(commit=False)
         file_replaced = document.file.name != previous_file
+        try:
+            _save_upload_and_record_event(
+                document,
+                document.file,
+                {
+                    "actor": request.user,
+                    "action": "document_modified",
+                    "target_label": document.title,
+                    "document": document,
+                    "details": {"file_replaced": file_replaced},
+                    "request": request,
+                },
+            )
+        except (OSError, RuntimeError, DatabaseError, ValueError) as error:
+            _log_upload_failure(
+                "Unable to update document.",
+                document.file,
+                error,
+                document_id=document.pk,
+                owner_id=request.user.pk,
+            )
+            form.add_error(
+                "file",
+                "The document could not be saved. Please try again later.",
+            )
+            return render(
+                request,
+                "documents/document_form.html",
+                {"form": form, "heading": "Edit document"},
+                status=503,
+            )
         if file_replaced:
-            storage.delete(previous_file)
-        record_event(
-            actor=request.user,
-            action="document_modified",
-            target_label=document.title,
-            document=document,
-            details={"file_replaced": file_replaced},
-            request=request,
-        )
+            try:
+                storage.delete(previous_file)
+            except (OSError, RuntimeError):
+                logger.exception(
+                    "Unable to remove the replaced file for document %s.",
+                    document.pk,
+                )
         messages.success(request, "Document details updated.")
         return redirect("documents:document_detail", document_id=document.pk)
     return render(request, "documents/document_form.html", {"form": form, "heading": "Edit document"})
@@ -305,15 +381,43 @@ def document_change_submit(request, document_id):
         change_request.document = document
         change_request.viewer = request.user
         change_request.uploaded_filename = request.FILES["submitted_file"].name
-        change_request.save()
-        record_event(
-            actor=request.user,
-            action="document_change_submitted",
-            target_label=document.title,
-            document=document,
-            details={"request_id": change_request.pk},
-            request=request,
-        )
+        try:
+            _save_upload_and_record_event(
+                change_request,
+                change_request.submitted_file,
+                {
+                    "actor": request.user,
+                    "action": "document_change_submitted",
+                    "target_label": document.title,
+                    "document": document,
+                    "details": {"request_id": change_request.pk},
+                    "request": request,
+                },
+            )
+        except (OSError, RuntimeError, DatabaseError, ValueError) as error:
+            _log_upload_failure(
+                "Unable to save submitted document.",
+                change_request.submitted_file,
+                error,
+                document_id=document.pk,
+                viewer_id=request.user.pk,
+            )
+            form.add_error(
+                "submitted_file",
+                "The change could not be saved. Please try again later.",
+            )
+            return render(
+                request,
+                "documents/document_form.html",
+                {
+                    "form": form,
+                    "heading": f"Submit a modified version of {document.title}",
+                    "help_text": (
+                        "The current document will not change until its owner approves your upload."
+                    ),
+                },
+                status=503,
+            )
         messages.success(request, "Your modified document was sent to the owner for approval.")
         return redirect("documents:document_detail", document_id=document.pk)
     return render(

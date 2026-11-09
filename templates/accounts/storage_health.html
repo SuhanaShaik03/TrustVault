@@ -9,6 +9,7 @@
       <li>Persistent disk mounted: {% if storage_status.disk_mounted %}Yes{% else %}No{% endif %}</li>
       <li>Private directory is under the configured mount: {% if storage_status.path_configured %}Yes{% else %}No{% endif %}</li>
       <li>Private directory available: {% if storage_status.directory_exists %}Yes{% else %}No{% endif %}</li>
+      <li>Directory writable: {% if storage_status.directory_writable %}Yes{% else %}No{% endif %}</li>
       <li>Write probe: {% if storage_status.write_ok %}Passed{% else %}Failed{% endif %}</li>
       <li>Read probe: {% if storage_status.read_ok %}Passed{% else %}Failed{% endif %}</li>
       <li>Delete probe: {% if storage_status.delete_ok %}Passed{% else %}Failed{% endif %}</li>
