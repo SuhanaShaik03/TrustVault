@@ -2,7 +2,6 @@ import logging
 from functools import wraps
 from mimetypes import guess_type
 from pathlib import Path
-
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied

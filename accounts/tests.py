@@ -5,7 +5,6 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 from unittest.mock import patch
-
 from accounts.models import LoginAccessRequest, User
 from documents.models import AuditEvent, Document, DocumentChangeRequest, DocumentGrant
 from documents.services import record_event, verify_audit_chain
