@@ -118,7 +118,25 @@ class DocumentPermissionTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 404)
+        self.assertContains(
+            response,
+            "contact the document owner",
+            status_code=404,
+        )
         self.assertFalse(AuditEvent.objects.filter(action="document_opened").exists())
+
+    def test_owner_open_missing_file_shows_replace_action(self):
+        self.storage.delete(self.document.file.name)
+        self.client.force_login(self.owner)
+
+        with self.assertLogs("documents.views", level="ERROR"):
+            response = self.client.get(
+                reverse("documents:document_open", args=[self.document.pk])
+            )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertContains(response, "Document file unavailable", status_code=404)
+        self.assertContains(response, "Replace document file", status_code=404)
 
 
     def test_owner_preview_missing_submitted_file_returns_not_found_not_server_error(self):
