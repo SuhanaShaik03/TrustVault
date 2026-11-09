@@ -1,6 +1,7 @@
 from urllib.parse import parse_qs, urlsplit
 
 from django.core.files.storage import InMemoryStorage
+from django.db import DatabaseError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
@@ -312,6 +313,7 @@ class LoginApprovalTests(TestCase):
 
     def test_admin_can_check_storage_health_without_exposing_path(self):
         self.client.force_login(self.admin)
+        url = reverse("accounts:storage_health")
         with patch(
             "accounts.views.check_private_storage",
             return_value={
@@ -324,8 +326,14 @@ class LoginApprovalTests(TestCase):
                 "delete_ok": True,
                 "healthy": True,
             },
-        ):
-            response = self.client.get(reverse("accounts:storage_health"))
+        ) as check_storage:
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Run storage check")
+            self.assertNotContains(response, "Write probe")
+            check_storage.assert_not_called()
+            response = self.client.post(url)
+            check_storage.assert_called_once()
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Persistent disk mounted: Yes")
@@ -347,10 +355,41 @@ class LoginApprovalTests(TestCase):
                 "healthy": False,
             },
         ):
-            response = self.client.get(reverse("accounts:storage_health"))
+            response = self.client.post(reverse("accounts:storage_health"))
 
         self.assertEqual(response.status_code, 503)
         self.assertContains(response, "Private storage is not ready", status_code=503)
+
+    def test_login_request_and_audit_event_roll_back_together(self):
+        viewer = User.objects.create_user(
+            username="rollback-viewer",
+            password="StrongPass987!test",
+            role=User.Role.VIEWER,
+            is_approved=False,
+        )
+        with patch(
+            "accounts.views.record_event",
+            side_effect=DatabaseError("Simulated audit failure."),
+        ):
+            with self.assertRaises(DatabaseError):
+                self.client.post(
+                    reverse("accounts:login"),
+                    {"username": viewer.username, "password": "StrongPass987!test"},
+                )
+
+        self.assertFalse(
+            LoginAccessRequest.objects.filter(
+                user=viewer,
+                status=LoginAccessRequest.Status.PENDING,
+            ).exists()
+        )
+
+    def test_storage_health_probe_requires_csrf_protected_post(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.admin)
+        response = client.post(reverse("accounts:storage_health"))
+
+        self.assertEqual(response.status_code, 403)
 
     def test_admin_created_owner_still_requires_login_approval(self):
         self.client.force_login(self.admin)
@@ -453,6 +492,29 @@ class LoginApprovalTests(TestCase):
                 self.assertContains(response, username)
                 self.assertContains(response, 'name="section" value="login-details"')
                 self.assertEqual(response.context["role_filter"], role)
+
+    def test_admin_dashboard_hides_delete_action_for_other_admins(self):
+        another_admin = User.objects.create_user(
+            username="another-admin",
+            password="SecurePass123!test",
+            role=User.Role.ADMIN,
+            is_approved=True,
+        )
+        regular_admin = User.objects.create_user(
+            username="regular-admin",
+            password="SecurePass123!test",
+            role=User.Role.ADMIN,
+            is_approved=True,
+        )
+        self.client.force_login(regular_admin)
+
+        response = self.client.get(reverse("accounts:admin_dashboard"))
+
+        self.assertContains(response, reverse("accounts:user_delete", args=[self.viewer.pk]))
+        self.assertNotContains(
+            response,
+            reverse("accounts:user_delete", args=[another_admin.pk]),
+        )
 
     def test_admin_dashboard_paginates_complete_activity_history(self):
         for index in range(55):

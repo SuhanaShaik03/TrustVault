@@ -38,9 +38,11 @@
                 <td>{% if account.is_approved %}Approved{% elif account.latest_login_request_status == "declined" %}Declined{% else %}Pending{% endif %}</td>
                 <td>
                   {% if account.pk != user.pk and not account.is_superuser %}
-                    <form method="post" action="{% url 'accounts:user_delete' account.pk %}" onsubmit="return confirm('Delete this account?');">
-                      {% csrf_token %}<button class="danger" type="submit">Delete</button>
-                    </form>
+                    {% if account.role != "admin" or user.is_superuser %}
+                      <form method="post" action="{% url 'accounts:user_delete' account.pk %}" onsubmit="return confirm('Delete this account?');">
+                        {% csrf_token %}<button class="danger" type="submit">Delete</button>
+                      </form>
+                    {% else %}<span class="muted">Protected</span>{% endif %}
                   {% else %}<span class="muted">Protected</span>{% endif %}
                 </td>
               </tr>

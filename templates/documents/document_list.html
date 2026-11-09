@@ -29,6 +29,7 @@
                 {% endtimezone %}
                 <td>
                   <a class="button" href="{% url 'documents:document_open' grant.document.pk %}" target="_blank" rel="noopener">Open document</a>
+                  <a class="button secondary" href="{% url 'documents:document_download' grant.document.pk %}">Download</a>
                   {% if grant.permission == "edit" %}
                     <a class="button secondary" href="{% url 'documents:document_change_submit' grant.document.pk %}">Upload document</a>
                   {% endif %}

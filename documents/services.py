@@ -3,7 +3,7 @@ import ipaddress
 import json
 
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from documents.models import AuditEvent, Document, DocumentChangeRequest
@@ -68,6 +68,9 @@ def record_event(
     details=None,
     request=None,
 ):
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", [0x545255535456])
     previous = AuditEvent.objects.select_for_update().order_by("-id").first()
     previous_hash = previous.event_hash if previous else GENESIS_HASH
     created_at = timezone.now()

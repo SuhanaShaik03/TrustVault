@@ -117,3 +117,13 @@ class PrivateDocumentStorage(FileSystemStorage):
         if settings.IS_RENDER:
             self._ensure_render_disk()
         return super()._save(name, content)
+
+    def _open(self, name, mode="rb"):
+        if settings.IS_RENDER:
+            self._ensure_render_disk()
+        return super()._open(name, mode)
+
+    def delete(self, name):
+        if settings.IS_RENDER:
+            self._ensure_render_disk()
+        return super().delete(name)
