@@ -20,7 +20,9 @@ class DocumentEditForm(forms.ModelForm):
         required=False,
         help_text="Supported formats: PDF and DOC only. Maximum upload size: 10 MiB.",
         validators=[validate_document_file],
-        widget=forms.ClearableFileInput(attrs={"accept": ".pdf,.doc"}),
+        # DatabaseDocumentStorage intentionally has no public URL, so the
+        # clearable widget's existing-file link would raise while rendering.
+        widget=forms.FileInput(attrs={"accept": ".pdf,.doc"}),
     )
 
     class Meta:
