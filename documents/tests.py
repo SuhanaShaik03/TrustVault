@@ -13,6 +13,24 @@ from documents.services import record_event, verify_audit_chain
 from documents.validators import validate_document_file
 
 class PrivateDocumentStorageTests(TestCase):
+    def test_render_storage_saves_and_reopens_a_file_on_the_mounted_disk(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            media_root = Path(temp_dir) / "media_private"
+            with (
+                patch("documents.storage.settings.IS_RENDER", True),
+                patch("documents.storage.settings.PRIVATE_MEDIA_ROOT", media_root),
+            ):
+                storage = PrivateDocumentStorage()
+                saved_name = storage.save(
+                    "documents/report.pdf",
+                    SimpleUploadedFile("report.pdf", b"%PDF-1.7 report"),
+                )
+
+                with storage.open(saved_name, "rb") as saved_file:
+                    self.assertEqual(saved_file.read(), b"%PDF-1.7 report")
+
+                storage.delete(saved_name)
+
     def test_render_storage_defers_disk_check_until_a_file_is_saved(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base_dir = Path(temp_dir)
