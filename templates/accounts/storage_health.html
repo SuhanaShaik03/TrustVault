@@ -1,31 +1,28 @@
 {% extends "base.html" %}
-{% block title %}Private storage health · TrustVault{% endblock %}
+{% block title %}PostgreSQL file storage health · TrustVault{% endblock %}
 {% block body_class %}dashboard-page{% endblock %}
 {% block content %}
   <section class="card">
-    <h1>Private storage health</h1>
-    <p>Run a check that creates, reads, and removes a temporary probe file. It does not open or expose uploaded documents.</p>
+    <h1>PostgreSQL file storage health</h1>
+    <p>Run a check that writes, reads, and removes a temporary database record. It does not open or expose uploaded documents.</p>
     <form method="post">
       {% csrf_token %}
-      <button type="submit">Run storage check</button>
+      <button type="submit">Run database storage check</button>
     </form>
     {% if storage_status %}
       <ul>
-        <li>Persistent disk mounted: {% if storage_status.disk_mounted %}Yes{% else %}No{% endif %}</li>
-        <li>Private directory is under the configured mount: {% if storage_status.path_configured %}Yes{% else %}No{% endif %}</li>
-        <li>Private directory available: {% if storage_status.directory_exists %}Yes{% else %}No{% endif %}</li>
-        <li>Directory writable: {% if storage_status.directory_writable %}Yes{% else %}No{% endif %}</li>
+        <li>Database connection: {% if storage_status.database_connected %}Available{% else %}Unavailable{% endif %}</li>
         <li>Write probe: {% if storage_status.write_ok %}Passed{% else %}Failed{% endif %}</li>
         <li>Read probe: {% if storage_status.read_ok %}Passed{% else %}Failed{% endif %}</li>
         <li>Delete probe: {% if storage_status.delete_ok %}Passed{% else %}Failed{% endif %}</li>
       </ul>
       {% if storage_status.healthy %}
-        <p class="notice">Private storage is ready.</p>
+        <p class="notice">PostgreSQL document storage is ready.</p>
       {% else %}
-        <p class="error">Private storage is not ready. Check the web service's attached persistent disk, mount path, environment variables, and filesystem permissions in Render.</p>
+        <p class="error">PostgreSQL document storage is not ready. Check the web service's database connection and PostgreSQL availability in Render.</p>
       {% endif %}
     {% else %}
-      <p>Run the check to verify the configured private storage.</p>
+      <p>Run the check to verify PostgreSQL document storage.</p>
     {% endif %}
     <a class="button secondary" href="{% url 'accounts:admin_dashboard' %}?section=login-details">Back to administrator dashboard</a>
   </section>

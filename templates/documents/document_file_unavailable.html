@@ -4,11 +4,11 @@
 {% block content %}
   <section class="card">
     {% if storage_unavailable %}
-      <h1>Private storage temporarily unavailable</h1>
-      <p>The file for <strong>{{ document.title }}</strong> could not be read right now. Please try again later or contact the deployment administrator.</p>
+      <h1>Document database temporarily unavailable</h1>
+      <p>The file for <strong>{{ document.title }}</strong> could not be read from PostgreSQL right now. Please try again later or contact the deployment administrator.</p>
     {% else %}
       <h1>Document file unavailable</h1>
-      <p>The record for <strong>{{ document.title }}</strong> exists, but its file could not be found in private storage.</p>
+      <p>The record for <strong>{{ document.title }}</strong> exists, but its file could not be found in PostgreSQL.</p>
     {% endif %}
     {% if is_owner and not storage_unavailable %}
       <p>To restore access, replace the missing file with your original PDF or DOC document.</p>

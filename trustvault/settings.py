@@ -159,21 +159,12 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STORAGES = {
     "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "BACKEND": "documents.storage.DatabaseDocumentStorage",
     },
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
 }
-PRIVATE_MEDIA_ROOT = Path(
-    os.environ.get("PRIVATE_MEDIA_ROOT", str(BASE_DIR / "media_private"))
-)
-PRIVATE_MEDIA_DISK_MOUNT = Path(
-    os.environ.get(
-        "PRIVATE_MEDIA_DISK_MOUNT",
-        "/var/data" if IS_RENDER else str(PRIVATE_MEDIA_ROOT.parent),
-    )
-)
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGIN_URL = "accounts:login"
 LOGIN_REDIRECT_URL = "accounts:dashboard"

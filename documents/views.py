@@ -21,32 +21,21 @@ from documents.forms import (
 )
 from documents.models import Document, DocumentChangeRequest, DocumentGrant
 from documents.services import record_event, review_document_change
-from documents.storage import storage_diagnostics
 from documents.validators import MAX_DOCUMENT_SIZE
 
 
 logger = logging.getLogger(__name__)
 
 
-class PrivateStorageUnavailable(Exception):
+class DocumentStorageUnavailable(Exception):
     pass
 
 
-def _log_upload_failure(message, file_field, error, **context):
-    diagnostics = storage_diagnostics(file_field.storage)
+def _log_upload_failure(message, error, **context):
     cause = error.__cause__ or error
     logger.error(
-        "%s backend=%s path=%s mount_path=%s disk_mounted=%s "
-        "path_configured=%s directory_exists=%s directory_writable=%s "
-        "exception_class=%s errno=%s cause_class=%s cause_errno=%s context=%s",
+        "%s exception_class=%s errno=%s cause_class=%s cause_errno=%s context=%s",
         message,
-        diagnostics["backend"],
-        diagnostics["path"],
-        diagnostics["mount_path"],
-        diagnostics["disk_mounted"],
-        diagnostics["path_configured"],
-        diagnostics["directory_exists"],
-        diagnostics["directory_writable"],
         type(error).__name__,
         getattr(error, "errno", None),
         type(cause).__name__,
@@ -56,20 +45,12 @@ def _log_upload_failure(message, file_field, error, **context):
     )
 
 
-def _save_upload_and_record_event(instance, file_field, event_details):
-    storage = file_field.storage
-    original_name = file_field.name
-    try:
-        with transaction.atomic():
-            instance.save()
-            record_event(**event_details)
-    except (DatabaseError, OSError, RuntimeError, ValueError):
-        if file_field.name and file_field.name != original_name:
-            try:
-                storage.delete(file_field.name)
-            except (OSError, RuntimeError):
-                logger.exception("Unable to clean up an incomplete document upload.")
-        raise
+def _save_upload_and_record_event(instance, event_details, files_to_delete=()):
+    with transaction.atomic():
+        instance.save()
+        for storage, file_name in files_to_delete:
+            storage.delete(file_name)
+        record_event(**event_details)
 
 
 def open_document_file(document):
@@ -81,14 +62,13 @@ def open_document_file(document):
             document.pk,
         )
         raise Http404("The document file is unavailable.") from error
-    except (OSError, RuntimeError) as error:
+    except (OSError, RuntimeError, DatabaseError) as error:
         _log_upload_failure(
             "Unable to read stored document.",
-            document.file,
             error,
             document_id=document.pk,
         )
-        raise PrivateStorageUnavailable from error
+        raise DocumentStorageUnavailable from error
 
 
 def document_file_unavailable_response(request, document):
@@ -221,7 +201,6 @@ def document_upload(request):
         try:
             _save_upload_and_record_event(
                 document,
-                document.file,
                 {
                     "actor": request.user,
                     "action": "document_uploaded",
@@ -233,15 +212,14 @@ def document_upload(request):
         except (OSError, RuntimeError, DatabaseError, ValueError) as error:
             _log_upload_failure(
                 "Unable to save uploaded document.",
-                document.file,
                 error,
                 owner_id=request.user.pk,
             )
             form.add_error(
                 "file",
                 "This Owner upload does not require Admin approval. The server could not "
-                "save the file to private storage. Please contact the deployment "
-                "administrator to check the Render disk.",
+                "save the file to PostgreSQL. Please contact the deployment "
+                "administrator to check the database.",
             )
             return render(
                 request,
@@ -296,7 +274,7 @@ def document_download(request, document_id):
         document_file = open_document_file(document)
     except Http404:
         return document_file_unavailable_response(request, document)
-    except PrivateStorageUnavailable:
+    except DocumentStorageUnavailable:
         return document_storage_unavailable_response(request, document)
     record_event(
         actor=request.user,
@@ -323,7 +301,7 @@ def document_open(request, document_id):
         document_file = open_document_file(document)
     except Http404:
         return document_file_unavailable_response(request, document)
-    except PrivateStorageUnavailable:
+    except DocumentStorageUnavailable:
         return document_storage_unavailable_response(request, document)
     record_event(
         actor=request.user,
@@ -354,13 +332,11 @@ def document_edit(request, document_id):
     previous_file = document.file.name
     form = DocumentEditForm(request.POST or None, request.FILES or None, instance=document)
     if request.method == "POST" and form.is_valid():
-        storage = document.file.storage
         document = form.save(commit=False)
         file_replaced = document.file.name != previous_file
         try:
             _save_upload_and_record_event(
                 document,
-                document.file,
                 {
                     "actor": request.user,
                     "action": "document_modified",
@@ -369,11 +345,15 @@ def document_edit(request, document_id):
                     "details": {"file_replaced": file_replaced},
                     "request": request,
                 },
+                files_to_delete=(
+                    ((document.file.storage, previous_file),)
+                    if file_replaced and previous_file
+                    else ()
+                ),
             )
         except (OSError, RuntimeError, DatabaseError, ValueError) as error:
             _log_upload_failure(
                 "Unable to update document.",
-                document.file,
                 error,
                 document_id=document.pk,
                 owner_id=request.user.pk,
@@ -388,14 +368,6 @@ def document_edit(request, document_id):
                 {"form": form, "heading": "Edit document"},
                 status=503,
             )
-        if file_replaced:
-            try:
-                storage.delete(previous_file)
-            except (OSError, RuntimeError):
-                logger.exception(
-                    "Unable to remove the replaced file for document %s.",
-                    document.pk,
-                )
         messages.success(request, "Document details updated.")
         return redirect("documents:document_detail", document_id=document.pk)
     return render(request, "documents/document_form.html", {"form": form, "heading": "Edit document"})
@@ -425,7 +397,6 @@ def document_change_submit(request, document_id):
         try:
             _save_upload_and_record_event(
                 change_request,
-                change_request.submitted_file,
                 {
                     "actor": request.user,
                     "action": "document_change_submitted",
@@ -438,7 +409,6 @@ def document_change_submit(request, document_id):
         except (OSError, RuntimeError, DatabaseError, ValueError) as error:
             _log_upload_failure(
                 "Unable to save submitted document.",
-                change_request.submitted_file,
                 error,
                 document_id=document.pk,
                 viewer_id=request.user.pk,
@@ -627,10 +597,9 @@ def document_change_preview(request, request_id):
             change_request.pk,
         )
         raise Http404("The submitted document is unavailable.") from error
-    except (OSError, RuntimeError) as error:
+    except (OSError, RuntimeError, DatabaseError) as error:
         _log_upload_failure(
             "Unable to read submitted document.",
-            change_request.submitted_file,
             error,
             change_request_id=change_request.pk,
             document_id=change_request.document_id,
@@ -676,25 +645,10 @@ def document_delete(request, document_id):
             details={"document_id": str(document.pk)},
             request=request,
         )
-        document.delete()
-    cleanup_failed = False
-    for storage, file_name in files_to_delete:
-        try:
+        for storage, file_name in files_to_delete:
             storage.delete(file_name)
-        except (OSError, RuntimeError):
-            logger.exception(
-                "Unable to remove private files after deleting document %s.",
-                document.pk,
-            )
-            cleanup_failed = True
-    if cleanup_failed:
-        messages.error(
-            request,
-            "The document record was deleted, but private file cleanup failed. "
-            "Contact the deployment administrator.",
-        )
-    else:
-        messages.success(request, "Document deleted.")
+        document.delete()
+    messages.success(request, "Document deleted.")
     return redirect("documents:document_list")
 
 

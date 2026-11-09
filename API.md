@@ -19,10 +19,10 @@ TrustVault currently serves HTML pages; it does not expose a JSON API. Django's 
 | `GET /accounts/admin/requests/{id}/` | Administrator role or superuser | Displays a login access request. |
 | `POST /accounts/admin/requests/{id}/review/` | Administrator role or superuser | Approves or declines a login access request. |
 | `GET /documents/` | Authenticated | Lists the caller's owned or explicitly granted documents. |
-| `GET/POST /documents/upload/` | Owner role | Uploads a validated file to private storage. |
+| `GET/POST /documents/upload/` | Owner role | Uploads a validated file into PostgreSQL. |
 | `GET /documents/{uuid}/` | Owner or current read/edit grantee | Returns document metadata and records a view event. |
-| `GET /documents/{uuid}/download/` | Owner or current read/edit grantee | Opens the private file after rechecking authorization and records a download. |
-| `GET /documents/{uuid}/open/` | Owner or current read/edit grantee | Opens the private file inline after rechecking authorization. |
+| `GET /documents/{uuid}/download/` | Owner or current read/edit grantee | Reads the file from PostgreSQL after rechecking authorization and records a download. |
+| `GET /documents/{uuid}/open/` | Owner or current read/edit grantee | Reads the file from PostgreSQL inline after rechecking authorization. |
 | `GET/POST /documents/{uuid}/edit/` | Owner role | Updates metadata or replaces the file. |
 | `POST /documents/{uuid}/delete/` | Owner role | Deletes the document and its stored files; retains the audit event. |
 | `GET/POST /documents/{uuid}/share/` | Owner role | Grants or changes read/edit access for an approved viewer. |
@@ -33,4 +33,4 @@ TrustVault currently serves HTML pages; it does not expose a JSON API. Django's 
 | `GET /owner/approval-requests/{request_id}/document/` | Owner role for the related document | Previews the pending replacement. |
 | `/django-admin/` | Django staff/superuser | Django administration; document file access is disabled there. |
 
-Audit events and chain verification are shown in the activity section of `/accounts/admin/?section=activity`. Unauthorized and unknown document IDs return 404. The administrator role does not grant document access; a named grant is still required. File uploads accept PDF and DOC files up to 10 MiB; DOCX and other formats are rejected. User files are served only through authorization-checked views and are not exposed as static or public media.
+Audit events and chain verification are shown in the activity section of `/accounts/admin/?section=activity`. Unauthorized and unknown document IDs return 404. The administrator role does not grant document access; a named grant is still required. File uploads accept PDF and DOC files up to 10 MiB; DOCX and other formats are rejected. File contents are stored in PostgreSQL and served only through authorization-checked views, never as public media.

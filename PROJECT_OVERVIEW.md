@@ -74,4 +74,4 @@ These checks describe testing performed; they should not be taken as a guarantee
 
 ## Document and file restrictions
 
-The current application accepts PDF and DOC files up to 10 MiB. DOCX and other unsupported formats are rejected. Documents are private and are served only after authorization checks.
+The current application accepts PDF and DOC files up to 10 MiB. DOCX and other unsupported formats are rejected. Document contents are stored in PostgreSQL with their records; no separate disk or file-storage service is used. Documents are private and are served only after authorization checks.

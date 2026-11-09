@@ -1,6 +1,5 @@
 from urllib.parse import parse_qs, urlsplit
 
-from django.core.files.storage import InMemoryStorage
 from django.db import DatabaseError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
@@ -8,6 +7,7 @@ from django.urls import reverse
 from unittest.mock import patch
 from accounts.models import LoginAccessRequest, User
 from documents.models import AuditEvent, Document, DocumentChangeRequest, DocumentGrant
+from documents.storage import DatabaseDocumentStorage
 from documents.services import record_event, verify_audit_chain
 
 class LoginApprovalTests(TestCase):
@@ -16,7 +16,7 @@ class LoginApprovalTests(TestCase):
         self.original_storage = self.file_field.storage
         self.change_file_field = DocumentChangeRequest._meta.get_field("submitted_file")
         self.original_change_storage = self.change_file_field.storage
-        self.storage = InMemoryStorage()
+        self.storage = DatabaseDocumentStorage()
         self.file_field.storage = self.storage
         self.change_file_field.storage = self.storage
         self.admin = User.objects.create_superuser(
@@ -311,16 +311,13 @@ class LoginApprovalTests(TestCase):
         response = self.client.get(reverse("accounts:storage_health"))
         self.assertEqual(response.status_code, 403)
 
-    def test_admin_can_check_storage_health_without_exposing_path(self):
+    def test_admin_can_check_database_file_storage_without_exposing_content(self):
         self.client.force_login(self.admin)
         url = reverse("accounts:storage_health")
         with patch(
-            "accounts.views.check_private_storage",
+            "accounts.views.check_database_file_storage",
             return_value={
-                "disk_mounted": True,
-                "path_configured": True,
-                "directory_exists": True,
-                "directory_writable": True,
+                "database_connected": True,
                 "write_ok": True,
                 "read_ok": True,
                 "delete_ok": True,
@@ -329,26 +326,23 @@ class LoginApprovalTests(TestCase):
         ) as check_storage:
             response = self.client.get(url)
             self.assertEqual(response.status_code, 200)
-            self.assertContains(response, "Run storage check")
+            self.assertContains(response, "Run database storage check")
             self.assertNotContains(response, "Write probe")
             check_storage.assert_not_called()
             response = self.client.post(url)
             check_storage.assert_called_once()
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Persistent disk mounted: Yes")
-        self.assertNotContains(response, "/var/data")
-        self.assertNotContains(response, "PRIVATE_MEDIA_ROOT")
+        self.assertContains(response, "Database connection: Available")
+        self.assertNotContains(response, "%PDF")
+        self.assertNotContains(response, "health-check/")
 
     def test_storage_health_returns_unavailable_when_probe_fails(self):
         self.client.force_login(self.admin)
         with patch(
-            "accounts.views.check_private_storage",
+            "accounts.views.check_database_file_storage",
             return_value={
-                "disk_mounted": False,
-                "path_configured": True,
-                "directory_exists": False,
-                "directory_writable": False,
+                "database_connected": False,
                 "write_ok": False,
                 "read_ok": False,
                 "delete_ok": False,
@@ -358,7 +352,11 @@ class LoginApprovalTests(TestCase):
             response = self.client.post(reverse("accounts:storage_health"))
 
         self.assertEqual(response.status_code, 503)
-        self.assertContains(response, "Private storage is not ready", status_code=503)
+        self.assertContains(
+            response,
+            "PostgreSQL document storage is not ready",
+            status_code=503,
+        )
 
     def test_login_request_and_audit_event_roll_back_together(self):
         viewer = User.objects.create_user(
@@ -580,3 +578,41 @@ class LoginApprovalTests(TestCase):
             ).exists()
         )
         self.assertTrue(verify_audit_chain())
+
+    def test_deleting_viewer_preserves_file_approved_as_another_owners_document(self):
+        owner = User.objects.create_user(
+            username="approved-file-owner",
+            password="SecurePass123!test",
+            role=User.Role.OWNER,
+            is_approved=True,
+        )
+        document = Document.objects.create(
+            owner=owner,
+            title="Approved report",
+            file=SimpleUploadedFile("original.pdf", b"%PDF-1.4 original content"),
+        )
+        change_request = DocumentChangeRequest.objects.create(
+            document=document,
+            viewer=self.viewer,
+            submitted_file=SimpleUploadedFile(
+                "approved.pdf",
+                b"%PDF-1.7 approved content",
+                content_type="application/pdf",
+            ),
+            uploaded_filename="approved.pdf",
+            status=DocumentChangeRequest.Status.APPROVED,
+        )
+        original_name = document.file.name
+        approved_name = change_request.submitted_file.name
+        document.file.name = approved_name
+        document.save(update_fields=["file", "updated_at"])
+        self.storage.delete(original_name)
+        self.client.force_login(self.admin)
+
+        response = self.client.post(reverse("accounts:user_delete", args=[self.viewer.pk]))
+
+        self.assertRedirects(response, reverse("accounts:user_list"))
+        self.assertFalse(User.objects.filter(pk=self.viewer.pk).exists())
+        self.assertTrue(self.storage.exists(approved_name))
+        document.refresh_from_db()
+        self.assertEqual(document.file.read(), b"%PDF-1.7 approved content")

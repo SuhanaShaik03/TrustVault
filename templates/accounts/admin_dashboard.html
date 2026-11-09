@@ -13,7 +13,7 @@
     <section id="login-details" class="card">
       <h2>Login details</h2>
       <p>Review user IDs and account names. Passwords are never displayed.</p>
-      <p><a class="button secondary" href="{% url 'accounts:storage_health' %}">Check private storage</a></p>
+      <p><a class="button secondary" href="{% url 'accounts:storage_health' %}">Check PostgreSQL file storage</a></p>
       <form method="get">
         <input type="hidden" name="section" value="login-details">
         <label for="role-filter">Select account type</label>

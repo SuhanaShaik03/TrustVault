@@ -1,4 +1,3 @@
-import logging
 from functools import wraps
 
 from django.contrib import messages
@@ -20,12 +19,9 @@ from accounts.services import (
     request_login_access,
     review_login_request,
 )
-from documents.models import AuditEvent, DocumentChangeRequest, DocumentGrant
+from documents.models import AuditEvent, Document, DocumentChangeRequest, DocumentGrant
 from documents.services import record_event, verify_audit_chain
-from documents.storage import check_private_storage
-
-
-logger = logging.getLogger(__name__)
+from documents.storage import check_database_file_storage
 
 
 def administrator_required(view_func):
@@ -207,7 +203,7 @@ def admin_invitations(request):
 @administrator_required
 @require_http_methods(["GET", "POST"])
 def storage_health(request):
-    status = check_private_storage() if request.method == "POST" else None
+    status = check_database_file_storage() if request.method == "POST" else None
     return render(
         request,
         "accounts/storage_health.html",
@@ -294,6 +290,14 @@ def user_delete(request, user_id):
                 request=request,
             )
             files_to_delete.append((document.file.storage, document.file.name))
+        remaining_document_files = set(
+            Document.objects.exclude(owner=user)
+            .exclude(file="")
+            .values_list("file", flat=True)
+        )
+        for storage, file_name in files_to_delete:
+            if file_name not in remaining_document_files:
+                storage.delete(file_name)
         record_event(
             actor=request.user,
             action="account_deleted",
@@ -302,24 +306,7 @@ def user_delete(request, user_id):
             request=request,
         )
         user.delete()
-    cleanup_failed = False
-    for storage, file_name in files_to_delete:
-        try:
-            storage.delete(file_name)
-        except (OSError, RuntimeError):
-            logger.exception(
-                "Unable to remove private files after deleting account %s.",
-                user.pk,
-            )
-            cleanup_failed = True
-    if cleanup_failed:
-        messages.error(
-            request,
-            "The account was deleted, but private file cleanup failed. "
-            "Contact the deployment administrator.",
-        )
-    else:
-        messages.success(request, "The account was deleted.")
+    messages.success(request, "The account was deleted.")
     return redirect("accounts:user_list")
 
 

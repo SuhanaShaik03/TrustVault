@@ -31,5 +31,17 @@ class AuditEventAdmin(admin.ModelAdmin):
         return False
 
 
-admin.site.register(Document)
+@admin.register(Document)
+class DocumentAdmin(admin.ModelAdmin):
+    fields = ("id", "owner", "title", "description", "created_at", "updated_at")
+    readonly_fields = fields
+    list_display = ("title", "owner", "created_at", "updated_at")
+
+    def has_add_permission(self, _request):
+        return False
+
+    def has_delete_permission(self, _request, _obj=None):
+        return False
+
+
 admin.site.register(DocumentGrant)

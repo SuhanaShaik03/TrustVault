@@ -2,15 +2,10 @@ services:
   - type: web
     name: trustvault
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --no-input
-    preDeployCommand: python manage.py migrate
-    startCommand: gunicorn trustvault.wsgi:application --bind 0.0.0.0:$PORT
+    startCommand: python manage.py migrate --noinput && gunicorn trustvault.wsgi:application --bind 0.0.0.0:$PORT
     healthCheckPath: /healthz/
-    disk:
-      name: trustvault-private-media
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.14.10
@@ -22,10 +17,6 @@ services:
         fromDatabase:
           name: trustvault-db
           property: connectionString
-      - key: PRIVATE_MEDIA_ROOT
-        value: /var/data/media_private
-      - key: PRIVATE_MEDIA_DISK_MOUNT
-        value: /var/data
       - key: TRUSTED_PROXY_COUNT
         value: "1"
 
