@@ -73,6 +73,48 @@ class PrivateDocumentStorageTests(TestCase):
 
             self.assertFalse(media_root.exists())
 
+    def test_render_storage_refuses_private_root_outside_disk_mount(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            mount = base_dir / "mounted_disk"
+            mount.mkdir()
+            media_root = base_dir / "ephemeral_media"
+            with (
+                patch("documents.storage.settings.IS_RENDER", True),
+                patch("documents.storage.settings.PRIVATE_MEDIA_ROOT", media_root),
+                patch("documents.storage.settings.PRIVATE_MEDIA_DISK_MOUNT", mount),
+                patch("documents.storage.os.path.ismount", return_value=True),
+            ):
+                storage = PrivateDocumentStorage()
+                with self.assertRaisesRegex(RuntimeError, "inside the configured"):
+                    storage.save(
+                        "documents/report.pdf",
+                        SimpleUploadedFile("report.pdf", b"%PDF-1.7 report"),
+                    )
+
+            self.assertFalse(media_root.exists())
+
+    def test_render_storage_refuses_reads_and_deletes_when_disk_is_not_mounted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            media_root = Path(temp_dir) / "media_private"
+            stored_path = media_root / "documents" / "report.pdf"
+            stored_path.parent.mkdir(parents=True)
+            stored_path.write_bytes(b"%PDF-1.7 report")
+
+            with (
+                patch("documents.storage.settings.IS_RENDER", True),
+                patch("documents.storage.settings.PRIVATE_MEDIA_ROOT", media_root),
+                patch("documents.storage.settings.PRIVATE_MEDIA_DISK_MOUNT", temp_dir),
+                patch("documents.storage.os.path.ismount", return_value=False),
+            ):
+                storage = PrivateDocumentStorage()
+                with self.assertRaisesRegex(RuntimeError, "not mounted"):
+                    storage.open("documents/report.pdf", "rb")
+                with self.assertRaisesRegex(RuntimeError, "not mounted"):
+                    storage.delete("documents/report.pdf")
+
+            self.assertTrue(stored_path.exists())
+
     def test_storage_health_probe_checks_write_read_delete(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             media_root = Path(temp_dir) / "media_private"
@@ -126,6 +168,48 @@ class DocumentPermissionTests(TestCase):
             change_request.submitted_file.delete(save=False)
         self.file_field.storage = self.original_storage
         self.change_file_field.storage = self.original_change_storage
+
+    def test_owner_upload_download_and_delete_use_private_filesystem(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            media_root = Path(temp_dir) / "media_private"
+            with (
+                patch("documents.storage.settings.IS_RENDER", False),
+                patch("documents.storage.settings.PRIVATE_MEDIA_ROOT", media_root),
+            ):
+                storage = PrivateDocumentStorage()
+                self.file_field.storage = storage
+                self.change_file_field.storage = storage
+                self.client.force_login(self.owner)
+
+                response = self.client.post(
+                    reverse("documents:document_upload"),
+                    {
+                        "title": "Filesystem upload",
+                        "file": SimpleUploadedFile(
+                            "report.pdf",
+                            b"%PDF-1.7 filesystem upload",
+                        ),
+                    },
+                )
+                self.assertEqual(response.status_code, 302)
+                document = Document.objects.get(title="Filesystem upload")
+                self.assertTrue(document.file.name.startswith("documents/"))
+                self.assertTrue(storage.exists(document.file.name))
+
+                response = self.client.get(
+                    reverse("documents:document_download", args=[document.pk])
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    b"".join(response.streaming_content),
+                    b"%PDF-1.7 filesystem upload",
+                )
+
+                response = self.client.post(
+                    reverse("documents:document_delete", args=[document.pk])
+                )
+                self.assertEqual(response.status_code, 302)
+                self.assertFalse(storage.exists(document.file.name))
 
     def test_unshared_user_cannot_open_document(self):
         self.client.force_login(self.viewer)
@@ -195,6 +279,25 @@ class DocumentPermissionTests(TestCase):
         self.assertContains(response, "Document file unavailable", status_code=404)
         self.assertContains(response, "Replace document file", status_code=404)
 
+    def test_storage_read_failure_returns_safe_service_unavailable_response(self):
+        self.client.force_login(self.owner)
+        with (
+            patch.object(
+                self.storage,
+                "open",
+                side_effect=PermissionError("private storage permission denied"),
+            ),
+            self.assertLogs("documents.views", level="ERROR") as captured,
+        ):
+            response = self.client.get(
+                reverse("documents:document_download", args=[self.document.pk])
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertContains(response, "Private storage temporarily unavailable", status_code=503)
+        self.assertNotContains(response, "permission denied", status_code=503)
+        self.assertIn("PermissionError", "\n".join(captured.output))
+
 
     def test_owner_preview_missing_submitted_file_returns_not_found_not_server_error(self):
         change_request = DocumentChangeRequest.objects.create(
@@ -212,6 +315,30 @@ class DocumentPermissionTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 404)
+
+    def test_owner_can_preview_submitted_file_without_caching_private_content(self):
+        change_request = DocumentChangeRequest.objects.create(
+            document=self.document,
+            viewer=self.viewer,
+            submitted_file=SimpleUploadedFile("revision.pdf", b"%PDF-1.7 revision"),
+            uploaded_filename="revision.pdf",
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            reverse("documents:document_change_preview", args=[change_request.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+        self.assertEqual(response["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(b"".join(response.streaming_content), b"%PDF-1.7 revision")
+        self.assertTrue(
+            AuditEvent.objects.filter(
+                action="document_change_previewed",
+                document=self.document,
+            ).exists()
+        )
 
     def test_edit_grant_cannot_change_original_document_directly(self):
         DocumentGrant.objects.create(
@@ -315,6 +442,8 @@ class DocumentPermissionTests(TestCase):
             reverse("documents:document_open", args=[self.document.pk])
         )
         self.assertEqual(opened.status_code, 200)
+        self.assertEqual(opened["Cache-Control"], "private, no-store")
+        self.assertEqual(opened["X-Content-Type-Options"], "nosniff")
         self.assertEqual(b"".join(opened.streaming_content), b"%PDF-1.4 confidential text")
 
         downloaded = self.client.get(
@@ -340,6 +469,34 @@ class DocumentPermissionTests(TestCase):
             ).exists()
         )
         self.assertTrue(verify_audit_chain())
+
+    def test_document_delete_reports_private_file_cleanup_failure(self):
+        self.client.force_login(self.owner)
+        with (
+            patch.object(
+                self.storage,
+                "delete",
+                side_effect=PermissionError("private storage is read-only"),
+            ),
+            self.assertLogs("documents.views", level="ERROR"),
+        ):
+            response = self.client.post(
+                reverse("documents:document_delete", args=[self.document.pk]),
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "private file cleanup failed")
+        self.assertFalse(Document.objects.filter(pk=self.document.pk).exists())
+
+    def test_document_open_and_download_reject_non_get_methods(self):
+        self.client.force_login(self.owner)
+        for endpoint in ("document_open", "document_download"):
+            with self.subTest(endpoint=endpoint):
+                response = self.client.post(
+                    reverse(f"documents:{endpoint}", args=[self.document.pk])
+                )
+                self.assertEqual(response.status_code, 405)
 
     def test_owner_cannot_access_another_owners_document_by_id(self):
         other_owner = User.objects.create_user(
@@ -672,6 +829,8 @@ class DocumentPermissionTests(TestCase):
         self.assertContains(response, "01 Jan 2026")
         self.assertContains(response, "12:00 AM")
         self.assertContains(response, "Open")
+        self.assertContains(response, "Download")
+        self.assertContains(response, "Details &amp; access")
         self.assertContains(response, "Edit details")
         self.assertContains(response, "Delete")
         self.assertNotContains(response, "Maximum upload size:")
@@ -744,6 +903,10 @@ class DocumentPermissionTests(TestCase):
             response,
             reverse("documents:document_open", args=[edit_grant.document_id]),
         )
+        self.assertContains(
+            response,
+            reverse("documents:document_download", args=[edit_grant.document_id]),
+        )
 
         response = self.client.get(reverse("documents:document_list"), {"tab": "uploaded"})
         self.assertContains(response, "revision.doc")
@@ -774,6 +937,25 @@ class DocumentPermissionTests(TestCase):
             {"document_id": self.document.pk, "action": "revoke"},
         )
         self.assertFalse(DocumentGrant.objects.filter(document=self.document, user=self.viewer).exists())
+
+    def test_access_change_rolls_back_if_audit_event_fails(self):
+        self.client.force_login(self.owner)
+        with patch(
+            "documents.views.record_event",
+            side_effect=DatabaseError("Simulated audit failure."),
+        ):
+            with self.assertRaises(DatabaseError):
+                self.client.post(
+                    reverse("documents:owner_viewer_access", args=[self.viewer.pk]),
+                    {
+                        "document_id": str(self.document.pk),
+                        "action": DocumentGrant.Permission.READ,
+                    },
+                )
+
+        self.assertFalse(
+            DocumentGrant.objects.filter(document=self.document, user=self.viewer).exists()
+        )
 
     def test_viewer_change_is_pending_until_owner_approves(self):
         DocumentGrant.objects.create(

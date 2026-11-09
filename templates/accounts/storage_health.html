@@ -4,22 +4,29 @@
 {% block content %}
   <section class="card">
     <h1>Private storage health</h1>
-    <p>This check creates, reads, and removes a temporary probe file. It does not open or expose uploaded documents.</p>
-    <ul>
-      <li>Persistent disk mounted: {% if storage_status.disk_mounted %}Yes{% else %}No{% endif %}</li>
-      <li>Private directory is under the configured mount: {% if storage_status.path_configured %}Yes{% else %}No{% endif %}</li>
-      <li>Private directory available: {% if storage_status.directory_exists %}Yes{% else %}No{% endif %}</li>
-      <li>Directory writable: {% if storage_status.directory_writable %}Yes{% else %}No{% endif %}</li>
-      <li>Write probe: {% if storage_status.write_ok %}Passed{% else %}Failed{% endif %}</li>
-      <li>Read probe: {% if storage_status.read_ok %}Passed{% else %}Failed{% endif %}</li>
-      <li>Delete probe: {% if storage_status.delete_ok %}Passed{% else %}Failed{% endif %}</li>
-    </ul>
-    {% if storage_status.healthy %}
-      <p class="notice">Private storage is ready.</p>
+    <p>Run a check that creates, reads, and removes a temporary probe file. It does not open or expose uploaded documents.</p>
+    <form method="post">
+      {% csrf_token %}
+      <button type="submit">Run storage check</button>
+    </form>
+    {% if storage_status %}
+      <ul>
+        <li>Persistent disk mounted: {% if storage_status.disk_mounted %}Yes{% else %}No{% endif %}</li>
+        <li>Private directory is under the configured mount: {% if storage_status.path_configured %}Yes{% else %}No{% endif %}</li>
+        <li>Private directory available: {% if storage_status.directory_exists %}Yes{% else %}No{% endif %}</li>
+        <li>Directory writable: {% if storage_status.directory_writable %}Yes{% else %}No{% endif %}</li>
+        <li>Write probe: {% if storage_status.write_ok %}Passed{% else %}Failed{% endif %}</li>
+        <li>Read probe: {% if storage_status.read_ok %}Passed{% else %}Failed{% endif %}</li>
+        <li>Delete probe: {% if storage_status.delete_ok %}Passed{% else %}Failed{% endif %}</li>
+      </ul>
+      {% if storage_status.healthy %}
+        <p class="notice">Private storage is ready.</p>
+      {% else %}
+        <p class="error">Private storage is not ready. Check the web service's attached persistent disk, mount path, environment variables, and filesystem permissions in Render.</p>
+      {% endif %}
     {% else %}
-      <p class="error">Private storage is not ready. Check the web service's attached persistent disk, mount path, environment variables, and filesystem permissions in Render.</p>
+      <p>Run the check to verify the configured private storage.</p>
     {% endif %}
     <a class="button secondary" href="{% url 'accounts:admin_dashboard' %}?section=login-details">Back to administrator dashboard</a>
   </section>
 {% endblock %}
-

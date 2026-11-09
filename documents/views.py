@@ -9,7 +9,7 @@ from django.db import DatabaseError, transaction
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from accounts.models import User
 from documents.forms import (
     DocumentChangeRequestForm,
@@ -26,6 +26,10 @@ from documents.validators import MAX_DOCUMENT_SIZE
 
 
 logger = logging.getLogger(__name__)
+
+
+class PrivateStorageUnavailable(Exception):
+    pass
 
 
 def _log_upload_failure(message, file_field, error, **context):
@@ -71,12 +75,20 @@ def _save_upload_and_record_event(instance, file_field, event_details):
 def open_document_file(document):
     try:
         return document.file.open("rb")
-    except OSError as error:
+    except FileNotFoundError as error:
         logger.exception(
             "Unable to open stored file for document %s.",
             document.pk,
         )
         raise Http404("The document file is unavailable.") from error
+    except (OSError, RuntimeError) as error:
+        _log_upload_failure(
+            "Unable to read stored document.",
+            document.file,
+            error,
+            document_id=document.pk,
+        )
+        raise PrivateStorageUnavailable from error
 
 
 def document_file_unavailable_response(request, document):
@@ -88,6 +100,19 @@ def document_file_unavailable_response(request, document):
             "is_owner": document.owner_id == request.user.pk,
         },
         status=404,
+    )
+
+
+def document_storage_unavailable_response(request, document):
+    return render(
+        request,
+        "documents/document_file_unavailable.html",
+        {
+            "document": document,
+            "is_owner": document.owner_id == request.user.pk,
+            "storage_unavailable": True,
+        },
+        status=503,
     )
 
 
@@ -125,6 +150,7 @@ def get_document_access(request, document_id, edit=False):
 
 
 @login_required
+@require_GET
 def document_list(request):
     if request.user.role == User.Role.OWNER:
         section = request.GET.get("section", "documents")
@@ -186,6 +212,7 @@ def document_list(request):
 
 
 @owner_required
+@require_http_methods(["GET", "POST"])
 def document_upload(request):
     form = DocumentForm(request.POST or None, request.FILES or None)
     if request.method == "POST" and form.is_valid():
@@ -228,6 +255,7 @@ def document_upload(request):
 
 
 @login_required
+@require_GET
 def document_detail(request, document_id):
     document = get_document_access(request, document_id)
     record_event(
@@ -261,12 +289,15 @@ def document_detail(request, document_id):
 
 
 @login_required
+@require_GET
 def document_download(request, document_id):
     document = get_document_access(request, document_id)
     try:
         document_file = open_document_file(document)
     except Http404:
         return document_file_unavailable_response(request, document)
+    except PrivateStorageUnavailable:
+        return document_storage_unavailable_response(request, document)
     record_event(
         actor=request.user,
         action="document_downloaded",
@@ -274,20 +305,26 @@ def document_download(request, document_id):
         document=document,
         request=request,
     )
-    return FileResponse(
+    response = FileResponse(
         document_file,
         as_attachment=True,
         filename=document.file.name.rsplit("/", 1)[-1],
     )
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @login_required
+@require_GET
 def document_open(request, document_id):
     document = get_document_access(request, document_id)
     try:
         document_file = open_document_file(document)
     except Http404:
         return document_file_unavailable_response(request, document)
+    except PrivateStorageUnavailable:
+        return document_storage_unavailable_response(request, document)
     record_event(
         actor=request.user,
         action="document_opened",
@@ -297,15 +334,19 @@ def document_open(request, document_id):
     )
     filename = Path(document.file.name).name
     content_type = guess_type(filename)[0] or "application/octet-stream"
-    return FileResponse(
+    response = FileResponse(
         document_file,
         as_attachment=False,
         filename=filename,
         content_type=content_type,
     )
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @login_required
+@require_http_methods(["GET", "POST"])
 def document_edit(request, document_id):
     document = get_document_access(request, document_id, edit=True)
     if document.owner_id != request.user.pk:
@@ -361,6 +402,7 @@ def document_edit(request, document_id):
 
 
 @login_required
+@require_http_methods(["GET", "POST"])
 def document_change_submit(request, document_id):
     document = get_document_access(request, document_id, edit=True)
     if document.owner_id == request.user.pk:
@@ -433,6 +475,7 @@ def document_change_submit(request, document_id):
 
 
 @owner_required
+@require_http_methods(["GET", "POST"])
 def owner_viewer_access(request, viewer_id):
     viewer = get_object_or_404(
         User,
@@ -449,41 +492,53 @@ def owner_viewer_access(request, viewer_id):
                 owner=request.user,
             )
             action = form.cleaned_data["action"]
-            grant = DocumentGrant.objects.filter(document=document, user=viewer).first()
+            with transaction.atomic():
+                grant = (
+                    DocumentGrant.objects.select_for_update()
+                    .filter(document=document, user=viewer)
+                    .first()
+                )
+                if action == "revoke":
+                    if grant:
+                        grant.delete()
+                        record_event(
+                            actor=request.user,
+                            action="document_access_revoked",
+                            target_label=document.title,
+                            document=document,
+                            details={"recipient": viewer.username},
+                            request=request,
+                        )
+                else:
+                    was_created = grant is None
+                    previous_permission = grant.permission if grant else None
+                    grant, _ = DocumentGrant.objects.update_or_create(
+                        document=document,
+                        user=viewer,
+                        defaults={"permission": action},
+                    )
+                    if was_created or previous_permission != action:
+                        record_event(
+                            actor=request.user,
+                            action=(
+                                "document_shared"
+                                if was_created
+                                else "document_permission_updated"
+                            ),
+                            target_label=document.title,
+                            document=document,
+                            details={
+                                "recipient": viewer.username,
+                                "permission": action,
+                            },
+                            request=request,
+                        )
             if action == "revoke":
                 if grant:
-                    grant.delete()
-                    record_event(
-                        actor=request.user,
-                        action="document_access_revoked",
-                        target_label=document.title,
-                        document=document,
-                        details={"recipient": viewer.username},
-                        request=request,
-                    )
                     messages.success(request, f"Access for {viewer.username} was revoked.")
                 else:
                     messages.info(request, f"{viewer.username} did not have this document.")
             else:
-                was_created = grant is None
-                previous_permission = grant.permission if grant else None
-                grant, _ = DocumentGrant.objects.update_or_create(
-                    document=document,
-                    user=viewer,
-                    defaults={"permission": action},
-                )
-                if was_created or previous_permission != action:
-                    record_event(
-                        actor=request.user,
-                        action="document_shared" if was_created else "document_permission_updated",
-                        target_label=document.title,
-                        document=document,
-                        details={
-                            "recipient": viewer.username,
-                            "permission": action,
-                        },
-                        request=request,
-                    )
                 messages.success(
                     request,
                     f"{viewer.username} now has {grant.get_permission_display().lower()} access.",
@@ -515,6 +570,7 @@ def owner_viewer_access(request, viewer_id):
 
 
 @owner_required
+@require_http_methods(["GET", "POST"])
 def document_change_detail(request, request_id):
     change_request = get_object_or_404(
         DocumentChangeRequest.objects.select_related("document", "viewer"),
@@ -553,6 +609,7 @@ def document_change_detail(request, request_id):
 
 
 @owner_required
+@require_GET
 def document_change_preview(request, request_id):
     change_request = get_object_or_404(
         DocumentChangeRequest.objects.select_related("document"),
@@ -564,45 +621,85 @@ def document_change_preview(request, request_id):
     content_type = guess_type(filename)[0] or "application/octet-stream"
     try:
         submitted_file = change_request.submitted_file.open("rb")
-    except OSError as error:
+    except FileNotFoundError as error:
         logger.exception(
             "Unable to open submitted file for change request %s.",
             change_request.pk,
         )
         raise Http404("The submitted document is unavailable.") from error
-    return FileResponse(
+    except (OSError, RuntimeError) as error:
+        _log_upload_failure(
+            "Unable to read submitted document.",
+            change_request.submitted_file,
+            error,
+            change_request_id=change_request.pk,
+            document_id=change_request.document_id,
+        )
+        return document_storage_unavailable_response(request, change_request.document)
+    record_event(
+        actor=request.user,
+        action="document_change_previewed",
+        target_label=change_request.document.title,
+        document=change_request.document,
+        details={
+            "request_id": change_request.pk,
+            "viewer": change_request.viewer.username,
+        },
+        request=request,
+    )
+    response = FileResponse(
         submitted_file,
         as_attachment=False,
         filename=filename,
         content_type=content_type,
     )
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @owner_required
 @require_POST
 def document_delete(request, document_id):
     document = get_object_or_404(Document, pk=document_id, owner=request.user)
-    record_event(
-        actor=request.user,
-        action="document_deleted",
-        target_label=document.title,
-        details={"document_id": str(document.pk)},
-        request=request,
-    )
     files_to_delete = [(document.file.storage, document.file.name)]
     files_to_delete.extend(
         (change_request.submitted_file.storage, change_request.submitted_file.name)
         for change_request in document.change_requests.all()
         if change_request.submitted_file
     )
-    document.delete()
+    with transaction.atomic():
+        record_event(
+            actor=request.user,
+            action="document_deleted",
+            target_label=document.title,
+            details={"document_id": str(document.pk)},
+            request=request,
+        )
+        document.delete()
+    cleanup_failed = False
     for storage, file_name in files_to_delete:
-        storage.delete(file_name)
-    messages.success(request, "Document deleted.")
+        try:
+            storage.delete(file_name)
+        except (OSError, RuntimeError):
+            logger.exception(
+                "Unable to remove private files after deleting document %s.",
+                document.pk,
+            )
+            cleanup_failed = True
+    if cleanup_failed:
+        messages.error(
+            request,
+            "The document record was deleted, but private file cleanup failed. "
+            "Contact the deployment administrator.",
+        )
+    else:
+        messages.success(request, "Document deleted.")
     return redirect("documents:document_list")
 
 
 @owner_required
+@require_http_methods(["GET", "POST"])
 def document_share(request, document_id):
     document = get_object_or_404(Document, pk=document_id, owner=request.user)
     form = GrantForm(request.POST or None)
@@ -611,23 +708,29 @@ def document_share(request, document_id):
         grant.document = document
         if grant.user_id == request.user.pk:
             form.add_error("user", "You already own this document.")
-        elif DocumentGrant.objects.filter(document=document, user=grant.user).exists():
-            form.add_error("user", "This user already has access.")
         else:
-            grant.save()
-            record_event(
-                actor=request.user,
-                action="document_shared",
-                target_label=document.title,
-                document=document,
-                details={
-                    "recipient": grant.user.username,
-                    "permission": grant.permission,
-                },
-                request=request,
-            )
-            messages.success(request, "Document access granted.")
-            return redirect("documents:document_detail", document_id=document.pk)
+            with transaction.atomic():
+                grant, created = DocumentGrant.objects.get_or_create(
+                    document=document,
+                    user=grant.user,
+                    defaults={"permission": grant.permission},
+                )
+                if created:
+                    record_event(
+                        actor=request.user,
+                        action="document_shared",
+                        target_label=document.title,
+                        document=document,
+                        details={
+                            "recipient": grant.user.username,
+                            "permission": grant.permission,
+                        },
+                        request=request,
+                    )
+            if created:
+                messages.success(request, "Document access granted.")
+                return redirect("documents:document_detail", document_id=document.pk)
+            form.add_error("user", "This user already has access.")
     return render(
         request,
         "documents/document_form.html",
@@ -641,14 +744,15 @@ def document_revoke(request, document_id, grant_id):
     document = get_object_or_404(Document, pk=document_id, owner=request.user)
     grant = get_object_or_404(DocumentGrant, pk=grant_id, document=document)
     recipient = grant.user.username
-    record_event(
-        actor=request.user,
-        action="document_access_revoked",
-        target_label=document.title,
-        document=document,
-        details={"recipient": recipient},
-        request=request,
-    )
-    grant.delete()
+    with transaction.atomic():
+        record_event(
+            actor=request.user,
+            action="document_access_revoked",
+            target_label=document.title,
+            document=document,
+            details={"recipient": recipient},
+            request=request,
+        )
+        grant.delete()
     messages.success(request, f"Access for {recipient} was revoked.")
     return redirect("documents:document_detail", document_id=document.pk)

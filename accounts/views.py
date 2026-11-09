@@ -1,3 +1,4 @@
+import logging
 from functools import wraps
 
 from django.contrib import messages
@@ -10,7 +11,7 @@ from django.db.models import OuterRef, Q, Subquery
 from django.http import HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods, require_POST
 from accounts.forms import LoginForm, RegistrationForm, UserCreateForm
 from accounts.models import LoginAccessRequest, User
 from accounts.services import (
@@ -22,6 +23,9 @@ from accounts.services import (
 from documents.models import AuditEvent, DocumentChangeRequest, DocumentGrant
 from documents.services import record_event, verify_audit_chain
 from documents.storage import check_private_storage
+
+
+logger = logging.getLogger(__name__)
 
 
 def administrator_required(view_func):
@@ -44,6 +48,7 @@ def dashboard(request):
     return redirect("documents:document_list")
 
 
+@require_http_methods(["GET", "POST"])
 def login_view(request):
     if request.user.is_authenticated:
         return redirect("accounts:dashboard")
@@ -54,16 +59,17 @@ def login_view(request):
             login(request, user)
             return redirect("accounts:dashboard")
 
-        access_request, was_declined = request_login_access(user)
-        if not access_request.pk:
-            raise RuntimeError("The login access request was not saved.")
-        record_event(
-            actor=user,
-            action="login_requested",
-            target_label=user.username,
-            details={"request_id": access_request.pk},
-            request=request,
-        )
+        with transaction.atomic():
+            access_request, was_declined = request_login_access(user)
+            if not access_request.pk:
+                raise RuntimeError("The login access request was not saved.")
+            record_event(
+                actor=user,
+                action="login_requested",
+                target_label=user.username,
+                details={"request_id": access_request.pk},
+                request=request,
+            )
         return render(
             request,
             "accounts/login_status.html",
@@ -73,6 +79,7 @@ def login_view(request):
     return render(request, "accounts/login.html", {"form": form})
 
 
+@require_http_methods(["GET", "POST"])
 def register_view(request):
     if request.user.is_authenticated:
         return redirect("accounts:dashboard")
@@ -174,19 +181,21 @@ def admin_dashboard(request):
 
 
 @administrator_required
+@require_http_methods(["GET", "POST"])
 def admin_invitations(request):
     invitation_url = None
     if request.method == "POST":
-        token, invitation = create_admin_invitation(request.user)
+        with transaction.atomic():
+            token, invitation = create_admin_invitation(request.user)
+            record_event(
+                actor=request.user,
+                action="admin_invitation_created",
+                target_label="Administrator invitation",
+                details={"invitation_id": invitation.pk},
+                request=request,
+            )
         invitation_url = request.build_absolute_uri(
             f"{reverse('accounts:register')}?invite={token}"
-        )
-        record_event(
-            actor=request.user,
-            action="admin_invitation_created",
-            target_label="Administrator invitation",
-            details={"invitation_id": invitation.pk},
-            request=request,
         )
     return render(
         request,
@@ -196,13 +205,14 @@ def admin_invitations(request):
 
 
 @administrator_required
+@require_http_methods(["GET", "POST"])
 def storage_health(request):
-    status = check_private_storage()
+    status = check_private_storage() if request.method == "POST" else None
     return render(
         request,
         "accounts/storage_health.html",
         {"storage_status": status},
-        status=200 if status["healthy"] else 503,
+        status=200 if status is None or status["healthy"] else 503,
     )
 
 
@@ -213,6 +223,7 @@ def user_list(request):
 
 
 @administrator_required
+@require_http_methods(["GET", "POST"])
 def user_create(request):
     form = UserCreateForm(
         request.POST or None,
@@ -291,9 +302,24 @@ def user_delete(request, user_id):
             request=request,
         )
         user.delete()
+    cleanup_failed = False
     for storage, file_name in files_to_delete:
-        storage.delete(file_name)
-    messages.success(request, "The account was deleted.")
+        try:
+            storage.delete(file_name)
+        except (OSError, RuntimeError):
+            logger.exception(
+                "Unable to remove private files after deleting account %s.",
+                user.pk,
+            )
+            cleanup_failed = True
+    if cleanup_failed:
+        messages.error(
+            request,
+            "The account was deleted, but private file cleanup failed. "
+            "Contact the deployment administrator.",
+        )
+    else:
+        messages.success(request, "The account was deleted.")
     return redirect("accounts:user_list")
 
 
@@ -318,15 +344,17 @@ def review_request(request, request_id):
     if decision not in {"approve", "decline"}:
         raise PermissionDenied("Invalid approval decision.")
     approved = decision == "approve"
-    changed = review_login_request(access_request, request.user, approved)
+    with transaction.atomic():
+        changed = review_login_request(access_request, request.user, approved)
+        if changed:
+            record_event(
+                actor=request.user,
+                action="login_request_approved" if approved else "login_request_declined",
+                target_label=access_request.username_snapshot,
+                details={"request_id": access_request.pk},
+                request=request,
+            )
     if changed:
-        record_event(
-            actor=request.user,
-            action="login_request_approved" if approved else "login_request_declined",
-            target_label=access_request.username_snapshot,
-            details={"request_id": access_request.pk},
-            request=request,
-        )
         messages.success(
             request,
             "Login access approved." if approved else "Login access declined.",

@@ -3,12 +3,17 @@
 {% block body_class %}dashboard-page{% endblock %}
 {% block content %}
   <section class="card">
-    <h1>Document file unavailable</h1>
-    <p>The record for <strong>{{ document.title }}</strong> exists, but its file could not be found in private storage.</p>
-    {% if is_owner %}
+    {% if storage_unavailable %}
+      <h1>Private storage temporarily unavailable</h1>
+      <p>The file for <strong>{{ document.title }}</strong> could not be read right now. Please try again later or contact the deployment administrator.</p>
+    {% else %}
+      <h1>Document file unavailable</h1>
+      <p>The record for <strong>{{ document.title }}</strong> exists, but its file could not be found in private storage.</p>
+    {% endif %}
+    {% if is_owner and not storage_unavailable %}
       <p>To restore access, replace the missing file with your original PDF or DOC document.</p>
       <a class="button" href="{% url 'documents:document_edit' document.pk %}">Replace document file</a>
-    {% else %}
+    {% elif not is_owner %}
       <p>Please contact the document owner and ask them to replace the missing file.</p>
     {% endif %}
     <a class="button secondary" href="{% url 'documents:document_list' %}">Back to documents</a>
