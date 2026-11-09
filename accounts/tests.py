@@ -9,7 +9,6 @@ from accounts.models import LoginAccessRequest, User
 from documents.models import AuditEvent, Document, DocumentChangeRequest, DocumentGrant
 from documents.services import record_event, verify_audit_chain
 
-
 class LoginApprovalTests(TestCase):
     def setUp(self):
         self.file_field = Document._meta.get_field("file")

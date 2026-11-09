@@ -85,7 +85,6 @@ INSTALLED_APPS = [
     "accounts",
     "documents",
 ]
-
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
