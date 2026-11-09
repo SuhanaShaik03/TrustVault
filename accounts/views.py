@@ -22,6 +22,7 @@ from accounts.services import (
 )
 from documents.models import AuditEvent, DocumentChangeRequest, DocumentGrant
 from documents.services import record_event, verify_audit_chain
+from documents.storage import check_private_storage
 
 
 def administrator_required(view_func):
@@ -192,6 +193,17 @@ def admin_invitations(request):
         request,
         "accounts/admin_invitations.html",
         {"invitation_url": invitation_url},
+    )
+
+
+@administrator_required
+def storage_health(request):
+    status = check_private_storage()
+    return render(
+        request,
+        "accounts/storage_health.html",
+        {"storage_status": status},
+        status=200 if status["healthy"] else 503,
     )
 
 
